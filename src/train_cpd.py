@@ -31,7 +31,7 @@ def make_model(copy_top_gvp):
     return PairwiseCPDModel(model, num_letters=20, hidden_dim=(16,100), copy_top_gvp=copy_top_gvp)
 
 def apply_model(dataset, model, optimizer, model_id, epoch, train, description):
-    loss, acc, confusion = loop_func(dataset, model, train=train, optimizer=optimizer)
+    loss, acc, confusion = util.loop(dataset, model, train=train, optimizer=optimizer)
     if train:
         util.save_checkpoint(model, optimizer, model_id, epoch)
     print('EPOCH {} {} {:.4f} {:.4f}'.format(epoch, description, loss, acc))
@@ -52,25 +52,24 @@ def main(
         util.load_checkpoint(model, optimizer, checkpoint)
 
 
-    loop_func = util.loop
+    # loop_func = util.loop
     # best_epoch, best_val = 0, np.inf
-    epoch = 0
 
     if only_eval:
-        if checkpoint is None:
-            raise Exception("Trying to eval without checkpoint")
-        apply_model(valset, model, optimizer, model_id, epoch, train=False, description="VAL")
+        if checkpoint is None and not copy_top_gvp:
+            raise Exception("Trying to eval with random top_gvp")
+        apply_model(valset, model, optimizer, model_id=None, epoch=None, train=False, description="VAL")
     else:
         model_id = int(datetime.timestamp(datetime.now()))
         NUM_EPOCHS = 100
-        # for epoch in range(NUM_EPOCHS):
-        while epoch < NUM_EPOCHS:
+        for epoch in range(NUM_EPOCHS):
+        # while epoch < NUM_EPOCHS:
             # loss, acc, confusion = loop_func(trainset, model, train=True, optimizer=optimizer)
             # util.save_checkpoint(model, optimizer, model_id, epoch)
             # print('EPOCH {} TRAIN {:.4f} {:.4f}'.format(epoch, loss, acc))
             # util.save_confusion(confusion)
             apply_model(trainset, model, optimizer, model_id, epoch, train=True, description="TRAIN")
-            apply_model(valset, model, optimizer, model_id, epoch, train=False, description="VAL")
+            apply_model(valset, model, optimizer, model_id=None, epoch=epoch, train=False, description="VAL")
 
             # loss, acc, confusion = loop_func(valset, model, train=False)
 
@@ -79,7 +78,7 @@ def main(
 
             # print('EPOCH {} VAL {:.4f} {:.4f}'.format(epoch, loss, acc))
             # util.save_confusion(confusion)
-            epoch += 1
+            # epoch += 1
 
         # Test with best validation loss
         path = util.models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
@@ -88,7 +87,7 @@ def main(
     # loss, acc, confusion = loop_func(testset, model, train=False)
     # print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
     # util.save_confusion(confusion)
-    apply_model(testset, model, optimizer, model_id, epoch, train=False, description="TEST")
+    apply_model(testset, model, optimizer, model_id=None, epoch=None, train=False, description="TEST")
 
 def make_parser():
     parser = argparse.ArgumentParser(description='Train/eval script parser')
@@ -100,6 +99,7 @@ def make_parser():
                     help='Whether to only eval')
     parser.add_argument('--copy_top_gvp', action='store_true',
                     help='Whether to init top gvp layer with the one from the CPDmodel featurizer')
+    return parser
 
 if __name__ == "__main__":
     args = make_parser().parse_args()
