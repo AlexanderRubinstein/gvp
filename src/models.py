@@ -6,6 +6,8 @@ import tensorflow as tf
 from tensorflow.keras import *
 from tensorflow.keras.layers import *
 from gvp import *
+from typing import Tuple
+from copy import deepcopy
 
 class MQAModel(Model):
     def __init__(self, node_features, edge_features,
@@ -93,22 +95,165 @@ class CPDModel(Model):
     def call(self, X, S, mask, train=False):
         # X [B, N, 4, 3], S [B, N], mask [B, N]
 
+        # V, E, E_idx = self.features(X, mask)
+        # h_V = self.W_v(V)
+        # h_E = self.W_e(E)
+        # h_V = self.encoder(h_V, h_E, E_idx, mask, train=train)
+        # h_S = self.W_s(S)
+        # h_V = self.decoder(h_V, h_S, h_E, E_idx, mask, train=train)
+        h_V = self.train_embeddings(X, S, mask, train=train)
+        logits = self.W_out(h_V)
+
+        return logits
+
+    def train_embeddings(self, X, S, mask, train):
         V, E, E_idx = self.features(X, mask)
         h_V = self.W_v(V)
         h_E = self.W_e(E)
         h_V = self.encoder(h_V, h_E, E_idx, mask, train=train)
         h_S = self.W_s(S)
         h_V = self.decoder(h_V, h_S, h_E, E_idx, mask, train=train)
-        logits = self.W_out(h_V) 
+        return h_V
         
-        return logits
-        
-    def sample(self, X, mask=None, temperature=0.1):
+    def sample(self, X, mask=None, only_embeddings=False, temperature=0.1):
         V, E, E_idx = self.features(X,  mask)
         h_V = self.W_v(V)
         h_E = self.W_e(E)
         h_V = self.encoder(h_V, h_E, E_idx, mask, train=False)
-        return self.decoder.sample(h_V, h_E, E_idx, mask, W_s=self.W_s, W_out=self.W_out, temperature=0.1)
+        return self.decoder.sample(
+            h_V,
+            h_E,
+            E_idx,
+            mask,
+            W_s=self.W_s,
+            W_out=self.W_out,
+            only_embeddings=only_embeddings,
+            temperature=0.1
+        )
+
+class PairwiseCPDModel(Model):
+    def __init__(
+        self,
+        featurizer: CPDModel,
+        num_letters: int,
+        hidden_dim: Tuple[int, int],
+        temperature: int = 0.1,
+        copy_top_gvp: bool = False) -> None:
+        super(PairwiseCPDModel, self).__init__()
+
+        self.featurizer = featurizer
+        # freeze featurizer weights
+        self.featurizer.trainable = False
+
+        # node_classificator over frozen featurizer
+        self.hv, self.hs = hidden_dim
+        self.num_letters = num_letters
+
+        self.node_classificator = GVP(
+            vi=self.hv,
+            vo=0,
+            so=self.num_letters,
+            nls=None,
+            nlv=None
+        )
+
+        if copy_top_gvp:
+            self.node_classificator = deepcopy(self.featurizer.W_out)
+
+        self.node_classificator.trainable = True
+
+        self.temperature = temperature
+
+        # self.pair_classificator = ??
+
+    # def make_paired_embeddings(self, embeddings: list(tf.Tensor), E_idx: ??):
+    #     _, _, E_idx = self.featurizer.features(X, mask)
+
+    #     ??
+
+    def forward_pairwise(self, X, mask, train=False):
+        embeddings = self.featurizer.sample(X, mask, only_embeddings=True, temperature=self.temperature)
+        _, _, E_idx = self.featurizer.features(X, mask)
+        print("E_idx.shape:", E_idx.shape)
+        # paired_embeddings = self.make_paired_embeddings(embeddings)
+        # logits = self.pair_classificator(paired_embeddings)
+
+        # embeddings_pairwise from X and E_idx
+
+
+        # return logits_pairwise, E_idx
+
+    # def inference(self, X, mask, logits_layer, temperature, predict_types=True):
+    def inference(self, X, mask, logits_layer, temperature, S=None, train=False):
+        if S is None:
+            # list with N_nodes tensors of [batch_size, 1, embedding_dim]
+            embeddings = self.featurizer.sample(X, mask, only_embeddings=True, temperature=temperature)
+
+
+            if len(embeddings) == 0:
+                raise Exception("Empty embeddings")
+
+            print("len(embeddings):", len(embeddings))
+            print("embeddings[0].shape:", embeddings[0].shape)
+
+            # print("len(self.trainable_weights):", len(self.trainable_weights))
+            # print("len(self.featurizer.trainable_weights):", len(self.featurizer.trainable_weights))
+            # print("len(self.featurizer.W_out.trainable_weights):", len(self.featurizer.W_out.trainable_weights))
+            # print("len(self.featurizer.W_out.non_trainable_weights):", len(self.featurizer.W_out.non_trainable_weights))
+            # print("len(self.node_classificator.trainable_weights):", len(self.node_classificator.trainable_weights))
+            # print("len(self.node_classificator.non_trainable_weights):", len(self.node_classificator.non_trainable_weights))
+            N_batch = embeddings[0].shape[0]
+            N_nodes = len(embeddings)
+
+            # if predict_types:
+            #     result = np.zeros((N_batch, N_nodes), dtype=np.int32)
+            # else:
+            #     result = np.zeros((N_batch, N_nodes, self.num_letters), dtype=np.float32)
+            # S = np.zeros((N_batch, N_nodes), dtype=np.int32)
+            # print("result.shape:", result.shape)
+
+            h_V_stacked = tf.squeeze(tf.stack(embeddings, axis=1), axis=2)  # [batch_size, num_nodes, embedding_dim]
+            print("h_V_stacked.shape:", h_V_stacked.shape)
+
+            logits_stacked = logits_layer(h_V_stacked) / temperature # [batch_size, num_nodes, num_letters]
+            print("logits_stacked.shape:", logits_stacked.shape)
+
+            predicted_S = np.zeros((N_batch, N_nodes), dtype=np.int32)
+            for t in range(N_nodes):
+                # probs = F.softmax(logits, dim=-1)
+                # logits = tf.squeeze(logits_stacked[:,t,:], axis=1)
+                logits = logits_stacked[:,t,:]
+                S_t = tf.squeeze(tf.random.categorical(logits, 1), -1)
+                predicted_S[:,t] = S_t
+            return predicted_S
+
+            # for t in range(N_nodes):
+            #     h_V_t = tf.squeeze(embeddings[t], 1)
+            #     # logits = self.featurizer.W_out(h_V_t) / temperature
+            #     logits = logits_layer(h_V_t) / temperature
+            #     print("logits.shape:", logits.shape)
+            #     # #probs = F.softmax(logits, dim=-1)
+            #     # S_t = tf.squeeze(tf.random.categorical(logits, 1), -1)
+            #     # S[:,t] = S_t
+            #     if predict_types:
+            #         #probs = F.softmax(logits, dim=-1)
+            #         S_t = tf.squeeze(tf.random.categorical(logits, 1), -1)
+            #         result[:,t] = S_t
+            #     else:
+            #         result[:,t,:] = logits
+            # return S
+        else:
+            h_V_stacked = self.featurizer.train_embeddings(X, S, mask, train=train)
+            logits_stacked = logits_layer(h_V_stacked) / temperature
+
+        return logits_stacked
+
+    def call(self, X, S, mask, train=False):
+        return self.inference(X, mask, self.node_classificator, self.temperature, S=S, train=train)
+
+    def sample_independently(self, X, mask, temperature):
+        # return self.inference(X, mask, self.featurizer.W_out, temperature)
+        return self.inference(X, mask, self.node_classificator, temperature)
     
 class Encoder(Model):
     def __init__(self, node_features, edge_features, num_layers=3, dropout=0.1):
@@ -182,7 +327,7 @@ class Decoder(Model): # DECODER
     # This is slow because TensorFlow doesn't allow indexed tensor writes
     # at runtime, so we have to move between CPU/GPU at every step.
     # If you can find a way around this, it will run a lot faster 
-    def sample(self, h_V, h_E, E_idx, mask, W_s, W_out, temperature=0.1):
+    def sample(self, h_V, h_E, E_idx, mask, W_s, W_out, only_embeddings=False, temperature=0.1):
         mask_attend = tf.expand_dims(autoregressive_mask(E_idx), -1)
         mask_1D = tf.reshape(mask, [mask.shape[0], mask.shape[1], 1, 1])
         mask_bw = mask_1D * mask_attend
@@ -193,6 +338,7 @@ class Decoder(Model): # DECODER
         h_S = np.zeros((N_batch, N_nodes, self.ss), dtype=np.float32)
         S = np.zeros((N_batch, N_nodes), dtype=np.int32)
         h_V_stack = [tf.split(h_V, N_nodes, 1)] + [tf.split(tf.zeros_like(h_V), N_nodes, 1) for _ in range(len(self.vglayers))]
+
         for t in tqdm.trange(N_nodes):
             # Hidden layers
             E_idx_t = E_idx[:,t:t+1,:]
@@ -217,6 +363,8 @@ class Decoder(Model): # DECODER
             # Update
             h_S[:,t,:] = W_s(S_t) # where to get W_S?
             S[:,t] = S_t
+        if only_embeddings:
+            return h_V_stack[-1] # list with N_nodes tensors of [batch_size, 1, embedding_dim]
         return S
 
 class MPNNLayer(Model):

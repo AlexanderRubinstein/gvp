@@ -8,6 +8,8 @@ from datetime import datetime
 import json, pdb
 import pandas as pd
 from collections import defaultdict
+import pickle
+import os
 jsonl_file = '../data/chain_set.jsonl'
 split_file = '../data/chain_set_splits.json'
 
@@ -31,30 +33,49 @@ def ts50_dataset(batch_size):
 # Loads the CATH 4.2 dataset while splitting into
 # train, validation, and test sets. You can safely ignore this
 # function for any other purpose.
-def cath_dataset(batch_size, jsonl_file=jsonl_file, filter_file=None):
-    print('Loading from', jsonl_file)
-    with open(split_file) as f:
-        dataset_splits = json.load(f)
+def cath_dataset(batch_size, jsonl_file=jsonl_file, filter_file=None, cache_name=None):
+    train_cache = f'../data/{cache_name}_trainset.pkl'
+    val_cache = f'../data/{cache_name}_valset.pkl'
+    test_cache = f'../data/{cache_name}_testset.pkl'
+    if cache_name and os.path.exists(train_cache) and os.path.exists(val_cache) and os.path.exists(test_cache):
+        with open(train_cache, 'rb') as train_inp:
+            trainset = pickle.load(train_inp)
+        with open(val_cache, 'rb') as val_inp:
+            valset = pickle.load(val_inp)
+        with open(test_cache, 'rb') as test_inp:
+            testset = pickle.load(test_inp)
+    else:
+        print('Loading from', jsonl_file)
+        with open(split_file) as f:
+            dataset_splits = json.load(f)
 
-    if filter_file:
-      print('Filtering from', filter_file)
-      filter_file = json.load(open(filter_file))["test"]
-      
-    train_list, val_list, test_list = dataset_splits['train'], dataset_splits['validation'], dataset_splits['test']
-    trainset, valset, testset = [], [], []
-    with open(jsonl_file) as f:
-        lines = f.readlines()
-    for i, line in tqdm.tqdm(enumerate(lines)):
-        entry = json.loads(line)
-        seq = entry['seq']
-        name = entry['name']
-        if filter_file and name not in filter_file: 
-            continue
-        for key, val in entry['coords'].items():
-            entry['coords'][key] = np.asarray(val)
-        if name in train_list: trainset.append(entry)
-        elif name in val_list: valset.append(entry)
-        elif name in test_list: testset.append(entry)
+        if filter_file:
+          print('Filtering from', filter_file)
+          filter_file = json.load(open(filter_file))["test"]
+
+        train_list, val_list, test_list = dataset_splits['train'], dataset_splits['validation'], dataset_splits['test']
+        trainset, valset, testset = [], [], []
+        with open(jsonl_file) as f:
+            lines = f.readlines()
+        for i, line in tqdm.tqdm(enumerate(lines)):
+            entry = json.loads(line)
+            seq = entry['seq']
+            name = entry['name']
+            if filter_file and name not in filter_file:
+                continue
+            for key, val in entry['coords'].items():
+                entry['coords'][key] = np.asarray(val)
+            if name in train_list: trainset.append(entry)
+            elif name in val_list: valset.append(entry)
+            elif name in test_list: testset.append(entry)
+
+        if cache_name:
+            with open(train_cache, 'wb') as outp:
+                pickle.dump(trainset, outp, pickle.HIGHEST_PROTOCOL)
+            with open(val_cache, 'wb') as outp:
+                pickle.dump(valset, outp, pickle.HIGHEST_PROTOCOL)
+            with open(test_cache, 'wb') as outp:
+                pickle.dump(testset, outp, pickle.HIGHEST_PROTOCOL)
             
     trainset = DynamicLoader(trainset, batch_size)
     valset = DynamicLoader(valset, batch_size)
@@ -126,6 +147,6 @@ class DynamicLoader():
         self.batch()
         if self.shuffle: np.random.shuffle(self.clusters)
         N = len(self.clusters)
-        for b_idx in self.clusters[:N]:
+        for b_idx in sorted(self.clusters[:N]):
             batch = [self.dataset[i] for i in b_idx]
             yield parse_batch(batch)

@@ -17,55 +17,68 @@ acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
 loss_metric = tf.keras.metrics.SparseCategoricalCrossentropy(from_logits=True)
 
 # Train / val / test loop for protein design
-def loop(dataset, model, train=False, optimizer=None):
-  acc_metric.reset_states()
-  loss_metric.reset_states()
-  mat = np.zeros((20, 20))
-  for batch in tqdm.tqdm(dataset):
-    X, S, M = batch
-    if train:
-      with tf.GradientTape() as tape:
-        logits = model(*batch, train=True)
-        loss_value = loss_fn(S, logits, sample_weight=M)
-    else:
-      logits = model(*batch, train=False)
-      loss_value = loss_fn(S, logits, sample_weight=M)
-    if train:
-      grads = tape.gradient(loss_value, model.trainable_weights)
-      optimizer.apply_gradients(zip(grads, model.trainable_weights))
-    acc_metric.update_state(S, logits, sample_weight=M)
-    loss_metric.update_state(S, logits, sample_weight=M)
-    pred = tf.math.argmax(logits, axis=-1)
-    mat += tf.math.confusion_matrix(tf.reshape(S, [-1]),
-              tf.reshape(pred, [-1]), weights=tf.reshape(M, [-1]))
-  loss, acc = loss_metric.result(), acc_metric.result()
-  return loss, acc, mat
+def loop(dataset, model, train=False, optimizer=None, pairwise=False):
+    acc_metric.reset_states()
+    loss_metric.reset_states()
+    mat = np.zeros((20, 20))
+    for batch in tqdm.tqdm(dataset):
+        X, S, M = batch
+        if pairwise:
+            # dims:
+                # max_n_pairs = max_n_nodes * (max_n_nodes - 1); 400 = n_aminos * n_aminos
+
+            # logits_pairwise, E_idx = model(X, M, train=True)  # [batch_size, max_n_pairs, 400]
+            # S_pairwise from S and E_idx  # [batch_size, max_n_pairs, 400]
+            # M_pairwise from M and E_idx  # [batch_size, max_n_pairs] (1 if E_idx(i, j) == 1) maybe it is euivalent to E_idx
+            # loss_value = loss_fn(S_pairwise, logits_pairwise, sample_weight=M_pairwise)
+            # logits from logits_pairwise
+            pass
+        else:
+            if train:
+                with tf.GradientTape() as tape:
+                    logits = model(*batch, train=True)
+                    loss_value = loss_fn(S, logits, sample_weight=M)
+            else:
+                logits = model(*batch, train=False)
+                loss_value = loss_fn(S, logits, sample_weight=M)
+            if train:
+                grads = tape.gradient(loss_value, model.trainable_weights)
+                optimizer.apply_gradients(zip(grads, model.trainable_weights))
+        acc_metric.update_state(S, logits, sample_weight=M)
+        loss_metric.update_state(S, logits, sample_weight=M)
+        pred = tf.math.argmax(logits, axis=-1)
+        mat += tf.math.confusion_matrix(tf.reshape(S, [-1]),
+                            tf.reshape(pred, [-1]), weights=tf.reshape(M, [-1]))
+    loss, acc = loss_metric.result(), acc_metric.result()
+    print("len(model.trainable_weights):", len(model.non_trainable_weights)) # DEBUG
+    print("len(model.non_trainable_weights):", len(model.non_trainable_weights)) # DEBUG
+    return loss, acc, mat
 
 # Save model and optimizer state
 def save_checkpoint(model, optimizer, model_id, epoch):
-  path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
-  ckpt = tf.train.Checkpoint(optimizer=optimizer, model=model)
-  ckpt.write(path) 
-  print('CHECKPOINT SAVED TO ' + path)
+    path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
+    ckpt = tf.train.Checkpoint(optimizer=optimizer, model=model)
+    ckpt.write(path)
+    print('CHECKPOINT SAVED TO ' + path)
 
 # Load model and optimizer state
 def load_checkpoint(model, optimizer, path):
-  ckpt = tf.train.Checkpoint(optimizer=optimizer, model=model)
-  ckpt.restore(path)
-  print('CHECKPOINT RESTORED FROM ' + path)
+    ckpt = tf.train.Checkpoint(optimizer=optimizer, model=model)
+    ckpt.restore(path)
+    print('CHECKPOINT RESTORED FROM ' + path)
 
 # Pretty print confusion matrix
 def save_confusion(mat):
-  counts = mat.numpy()
-  mat = (counts.T / counts.sum(axis=-1, keepdims=True).T).T
-  mat = np.round(mat * 1000).astype(np.int32)
-  res = '\n'
-  for i in range(20):
-    res += '\t{}'.format(id_to_one[i])
-  res += '\n'
-  for i in range(20):
-    res += '{}\t'.format(id_to_one[i])
-    res += '\t'.join('{}'.format(n) for n in mat[i])
-    res += '\t{}\n'.format(sum(counts[i]))
-  print(res)
+    counts = mat.numpy()
+    mat = (counts.T / counts.sum(axis=-1, keepdims=True).T).T
+    mat = np.round(mat * 1000).astype(np.int32)
+    res = '\n'
+    for i in range(20):
+        res += '\t{}'.format(id_to_one[i])
+    res += '\n'
+    for i in range(20):
+        res += '{}\t'.format(id_to_one[i])
+        res += '\t'.join('{}'.format(n) for n in mat[i])
+        res += '\t{}\n'.format(sum(counts[i]))
+    print(res)
 

@@ -1,0 +1,5 @@
+src/__pycache__
+outputs/*.out
+data/*.pkl
+data/*.json
+data/*.jsonl
