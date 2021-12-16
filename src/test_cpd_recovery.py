@@ -6,7 +6,7 @@ import random, pdb, sys
 import numpy as np
 import tqdm, util
 from models import *
-import pickle
+import argparse
 
 
 def recovery(designs, orig):
@@ -20,23 +20,35 @@ def sample(sampling_method, structure, mask, n, T=0.1): # [1, N, 4, 3]
     mask = tf.repeat(mask, n, axis=0)
     return sampling_method(structure, mask, temperature=0.1)
 
-MAX_STRUCTS = 1
+def make_parser():
+    parser = argparse.ArgumentParser(description='test cpd script parser')
+    parser.add_argument('--model_path', type=str,
+                    help='path to the model to eval')
+    parser.add_argument('--test_type', type=str,
+                    help='what kind of test set to use', choices=["cath", "short", "sc", "ts50"])
+    parser.add_argument('--output_file', type=str,
+                    help='output file')
+    parser.add_argument('--max_structs', type=int, default=0,
+                    help='max number of structs to test on')
+    return parser
 
 if __name__ == "__main__":
+    args = make_parser().parse_args()
+
     model = CPDModel(node_features=(8, 100), edge_features=(1,32), hidden_dim=(16,100))
     optimizer = tf.keras.optimizers.Adam()
 
-    util.load_checkpoint(model, optimizer, sys.argv[1])
+    util.load_checkpoint(model, optimizer, args.model_path)
 
     pairwise_model = PairwiseCPDModel(model, num_letters=20, hidden_dim=(16,100), copy_top_gvp=True)
 
-    if sys.argv[2] == "cath":
+    if args.test_type == "cath":
         _, _, testset = cath_dataset(1)
-    elif sys.argv[2] == "short":
+    elif args.test_type == "short":
         _, _, testset = cath_dataset(1, filter_file='../data/test_split_L100.json', cache_name="cath_short")
-    elif sys.argv[2] == "sc":
+    elif args.test_type == "sc":
         _, _, testset = cath_dataset(1, filter_file='../data/test_split_sc.json', cache_name="cath_sc")
-    elif sys.argv[2] == "ts50":
+    elif args.test_type == "ts50":
         testset = ts50_dataset(1)
 
     num = 0
@@ -63,8 +75,8 @@ if __name__ == "__main__":
         seq = seq.numpy()
         res = recovery(design, seq)
         print(res)
-        with open(sys.argv[3], 'w') as f:
+        with open(args.output_file, 'w') as f:
             f.write(str(res) + '\n')
 
-        if num == MAX_STRUCTS:
+        if args.max_structs > 0 and num == args.max_structs:
             break

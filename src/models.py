@@ -141,13 +141,15 @@ class PairwiseCPDModel(Model):
         copy_top_gvp: bool = False) -> None:
         super(PairwiseCPDModel, self).__init__()
 
+        self.hv, self.hs = hidden_dim
+        self.num_letters = num_letters
+        self.temperature = temperature
+
         self.featurizer = featurizer
         # freeze featurizer weights
         self.featurizer.trainable = False
 
         # node_classificator over frozen featurizer
-        self.hv, self.hs = hidden_dim
-        self.num_letters = num_letters
 
         self.node_classificator = GVP(
             vi=self.hv,
@@ -162,7 +164,6 @@ class PairwiseCPDModel(Model):
 
         self.node_classificator.trainable = True
 
-        self.temperature = temperature
 
         # self.pair_classificator = ??
 
@@ -183,7 +184,6 @@ class PairwiseCPDModel(Model):
 
         # return logits_pairwise, E_idx
 
-    # def inference(self, X, mask, logits_layer, temperature, predict_types=True):
     def inference(self, X, mask, logits_layer, temperature, S=None, train=False):
         if S is None:
             # list with N_nodes tensors of [batch_size, 1, embedding_dim]
@@ -193,55 +193,21 @@ class PairwiseCPDModel(Model):
             if len(embeddings) == 0:
                 raise Exception("Empty embeddings")
 
-            print("len(embeddings):", len(embeddings))
-            print("embeddings[0].shape:", embeddings[0].shape)
-
-            # print("len(self.trainable_weights):", len(self.trainable_weights))
-            # print("len(self.featurizer.trainable_weights):", len(self.featurizer.trainable_weights))
-            # print("len(self.featurizer.W_out.trainable_weights):", len(self.featurizer.W_out.trainable_weights))
-            # print("len(self.featurizer.W_out.non_trainable_weights):", len(self.featurizer.W_out.non_trainable_weights))
-            # print("len(self.node_classificator.trainable_weights):", len(self.node_classificator.trainable_weights))
-            # print("len(self.node_classificator.non_trainable_weights):", len(self.node_classificator.non_trainable_weights))
             N_batch = embeddings[0].shape[0]
             N_nodes = len(embeddings)
 
-            # if predict_types:
-            #     result = np.zeros((N_batch, N_nodes), dtype=np.int32)
-            # else:
-            #     result = np.zeros((N_batch, N_nodes, self.num_letters), dtype=np.float32)
-            # S = np.zeros((N_batch, N_nodes), dtype=np.int32)
-            # print("result.shape:", result.shape)
-
             h_V_stacked = tf.squeeze(tf.stack(embeddings, axis=1), axis=2)  # [batch_size, num_nodes, embedding_dim]
-            print("h_V_stacked.shape:", h_V_stacked.shape)
 
             logits_stacked = logits_layer(h_V_stacked) / temperature # [batch_size, num_nodes, num_letters]
-            print("logits_stacked.shape:", logits_stacked.shape)
 
             predicted_S = np.zeros((N_batch, N_nodes), dtype=np.int32)
             for t in range(N_nodes):
-                # probs = F.softmax(logits, dim=-1)
-                # logits = tf.squeeze(logits_stacked[:,t,:], axis=1)
                 logits = logits_stacked[:,t,:]
+                # probs = F.softmax(logits, dim=-1)
                 S_t = tf.squeeze(tf.random.categorical(logits, 1), -1)
                 predicted_S[:,t] = S_t
             return predicted_S
 
-            # for t in range(N_nodes):
-            #     h_V_t = tf.squeeze(embeddings[t], 1)
-            #     # logits = self.featurizer.W_out(h_V_t) / temperature
-            #     logits = logits_layer(h_V_t) / temperature
-            #     print("logits.shape:", logits.shape)
-            #     # #probs = F.softmax(logits, dim=-1)
-            #     # S_t = tf.squeeze(tf.random.categorical(logits, 1), -1)
-            #     # S[:,t] = S_t
-            #     if predict_types:
-            #         #probs = F.softmax(logits, dim=-1)
-            #         S_t = tf.squeeze(tf.random.categorical(logits, 1), -1)
-            #         result[:,t] = S_t
-            #     else:
-            #         result[:,t,:] = logits
-            # return S
         else:
             h_V_stacked = self.featurizer.train_embeddings(X, S, mask, train=train)
             logits_stacked = logits_layer(h_V_stacked) / temperature

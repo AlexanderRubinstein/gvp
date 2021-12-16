@@ -50,7 +50,7 @@ def loop(dataset, model, train=False, optimizer=None, pairwise=False):
         mat += tf.math.confusion_matrix(tf.reshape(S, [-1]),
                             tf.reshape(pred, [-1]), weights=tf.reshape(M, [-1]))
     loss, acc = loss_metric.result(), acc_metric.result()
-    print("len(model.trainable_weights):", len(model.non_trainable_weights)) # DEBUG
+    print("len(model.trainable_weights):", len(model.trainable_weights)) # DEBUG
     print("len(model.non_trainable_weights):", len(model.non_trainable_weights)) # DEBUG
     return loss, acc, mat
 
@@ -64,7 +64,7 @@ def save_checkpoint(model, optimizer, model_id, epoch):
 # Load model and optimizer state
 def load_checkpoint(model, optimizer, path):
     ckpt = tf.train.Checkpoint(optimizer=optimizer, model=model)
-    ckpt.restore(path)
+    ckpt.restore(path).expect_partial()
     print('CHECKPOINT RESTORED FROM ' + path)
 
 # Pretty print confusion matrix

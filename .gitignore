@@ -3,3 +3,5 @@ outputs/*.out
 data/*.pkl
 data/*.json
 data/*.jsonl
+models/*.data*
+models/*.index*
