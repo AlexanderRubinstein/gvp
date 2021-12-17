@@ -71,6 +71,8 @@ if __name__ == "__main__":
         testset = ts50_dataset(1)
 
     num = 0
+    with open(args.output_file, 'w') as f:
+            f.write('\n')
     for structure, seq, mask in tqdm.tqdm(testset):
 
         num += 1
@@ -90,7 +92,7 @@ if __name__ == "__main__":
         seq = seq.numpy()
         res = recovery(design, seq)
         print(res)
-        with open(args.output_file, 'w') as f:
+        with open(args.output_file, 'a+') as f:
             f.write(str(res) + '\n')
 
         if args.max_structs > 0 and num == args.max_structs:

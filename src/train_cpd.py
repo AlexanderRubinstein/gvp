@@ -21,14 +21,18 @@ import tqdm, sys
 import util, pdb
 from models import *
 
-def make_model(copy_top_gvp):
+def make_model(pairwise, copy_top_gvp):
     model = CPDModel(node_features=(8, 100), edge_features=(1,32), hidden_dim=(16,100))
 
-    optimizer = tf.keras.optimizers.Adam()
-    util.load_checkpoint(model, optimizer, os.path.join("..", "models", "cath_pretrained"))
+    if pairwise:
 
-    # return model
-    return PairwiseCPDModel(model, num_letters=20, hidden_dim=(16,100), copy_top_gvp=copy_top_gvp)
+        optimizer = tf.keras.optimizers.Adam()
+        util.load_checkpoint(model, optimizer, os.path.join("..", "models", "cath_pretrained"))
+
+        # return model
+        return PairwiseCPDModel(model, num_letters=20, hidden_dim=(16,100), copy_top_gvp=copy_top_gvp)
+
+    return model
 
 def apply_model(dataset, model, optimizer, model_id, epoch, train, description):
     loss, acc, confusion = util.loop(dataset, model, train=train, optimizer=optimizer)
@@ -41,11 +45,17 @@ def main(
     dataset_file,
     only_eval,
     checkpoint,
-    copy_top_gvp
+    copy_top_gvp,
+    pairwise
 ):
+    if not pairwise and copy_top_gvp:
+        raise Exception("Trying to copy top gvp to the original model")
+
     trainset, valset, testset = cath_dataset(1800, jsonl_file=dataset_file) # batch size = 1800 residues
     optimizer = tf.keras.optimizers.Adam()
-    model = make_model(copy_top_gvp)
+
+
+    model = make_model(pairwise, copy_top_gvp)
 
     if checkpoint:
         print(f"Loading model from checkpoint: {checkpoint}")
@@ -99,6 +109,8 @@ def make_parser():
                     help='Whether to only eval')
     parser.add_argument('--copy_top_gvp', action='store_true',
                     help='Whether to init top gvp layer with the one from the CPDmodel featurizer')
+    parser.add_argument('--pairwise', action="store_true",
+                    help='whether to use pairwise model')
     return parser
 
 if __name__ == "__main__":
@@ -107,5 +119,6 @@ if __name__ == "__main__":
         dataset_file=args.dataset_file,
         only_eval=args.only_eval,
         checkpoint=args.checkpoint,
-        copy_top_gvp=args.copy_top_gvp
+        copy_top_gvp=args.copy_top_gvp,
+        pairwise=args.pairwise
     )
