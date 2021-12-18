@@ -8,9 +8,9 @@ import tqdm, util
 from models import *
 import argparse
 import os
+import pickle
 
-
-FEATURIZER_PATH = os.path.join("..", "models", "cath_pretrained")
+from constants import FEATURIZER_PATH
 
 def recovery(designs, orig):
     N, L = designs.shape

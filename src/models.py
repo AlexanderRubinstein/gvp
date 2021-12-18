@@ -91,35 +91,28 @@ class CPDModel(Model):
         self.W_out = GVP(vi=self.hv, vo=0, so=num_letters,
                           nls=None, nlv=None)
 
-
-    def call(self, X, S, mask, train=False):
-        # X [B, N, 4, 3], S [B, N], mask [B, N]
-
-        # V, E, E_idx = self.features(X, mask)
-        # h_V = self.W_v(V)
-        # h_E = self.W_e(E)
-        # h_V = self.encoder(h_V, h_E, E_idx, mask, train=train)
-        # h_S = self.W_s(S)
-        # h_V = self.decoder(h_V, h_S, h_E, E_idx, mask, train=train)
-        h_V = self.train_embeddings(X, S, mask, train=train)
-        logits = self.W_out(h_V)
-
-        return logits
-
-    def train_embeddings(self, X, S, mask, train):
+    def encoder_embeddings(self, X, mask, train):
         V, E, E_idx = self.features(X, mask)
         h_V = self.W_v(V)
         h_E = self.W_e(E)
         h_V = self.encoder(h_V, h_E, E_idx, mask, train=train)
+        return h_V, h_E, E_idx
+
+    def train_embeddings(self, X, S, mask, train):
+        h_V, h_E, E_idx = self.encoder_embeddings(X, mask, train=train)
         h_S = self.W_s(S)
         h_V = self.decoder(h_V, h_S, h_E, E_idx, mask, train=train)
         return h_V
+
+    def call(self, X, S, mask, train=False):
+        # X [B, N, 4, 3], S [B, N], mask [B, N]
+        h_V = self.train_embeddings(X, S, mask, train=train)
+        logits = self.W_out(h_V)
+
+        return logits
         
     def sample(self, X, mask=None, only_embeddings=False, temperature=0.1):
-        V, E, E_idx = self.features(X,  mask)
-        h_V = self.W_v(V)
-        h_E = self.W_e(E)
-        h_V = self.encoder(h_V, h_E, E_idx, mask, train=False)
+        h_V, h_E, E_idx = self.encoder_embeddings(X, mask, train=False)
         return self.decoder.sample(
             h_V,
             h_E,
@@ -210,7 +203,7 @@ class PairwiseCPDModel(Model):
 
         else:
             h_V_stacked = self.featurizer.train_embeddings(X, S, mask, train=train)
-            logits_stacked = logits_layer(h_V_stacked) / temperature
+            logits_stacked = logits_layer(h_V_stacked)
 
         return logits_stacked
 

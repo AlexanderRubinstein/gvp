@@ -20,6 +20,7 @@ import random
 import tqdm, sys
 import util, pdb
 from models import *
+from constants import FEATURIZER_PATH
 
 def make_model(pairwise, copy_top_gvp):
     model = CPDModel(node_features=(8, 100), edge_features=(1,32), hidden_dim=(16,100))
@@ -27,7 +28,7 @@ def make_model(pairwise, copy_top_gvp):
     if pairwise:
 
         optimizer = tf.keras.optimizers.Adam()
-        util.load_checkpoint(model, optimizer, os.path.join("..", "models", "cath_pretrained"))
+        util.load_checkpoint(model, optimizer, FEATURIZER_PATH)
 
         # return model
         return PairwiseCPDModel(model, num_letters=20, hidden_dim=(16,100), copy_top_gvp=copy_top_gvp)
