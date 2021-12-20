@@ -71,8 +71,9 @@ if __name__ == "__main__":
         testset = ts50_dataset(1)
 
     num = 0
+    # to reset file
     with open(args.output_file, 'w') as f:
-            f.write('\n')
+            f.write('')
     for structure, seq, mask in tqdm.tqdm(testset):
 
         num += 1

@@ -33,7 +33,7 @@ def ts50_dataset(batch_size):
 # Loads the CATH 4.2 dataset while splitting into
 # train, validation, and test sets. You can safely ignore this
 # function for any other purpose.
-def cath_dataset(batch_size, jsonl_file=jsonl_file, filter_file=None, cache_name=None):
+def cath_dataset(batch_size, jsonl_file=jsonl_file, filter_file=None, cache_name=None, shuffle_test=False):
     train_cache = f'../data/{cache_name}_trainset.pkl'
     val_cache = f'../data/{cache_name}_valset.pkl'
     test_cache = f'../data/{cache_name}_testset.pkl'
@@ -76,10 +76,10 @@ def cath_dataset(batch_size, jsonl_file=jsonl_file, filter_file=None, cache_name
                 pickle.dump(valset, outp, pickle.HIGHEST_PROTOCOL)
             with open(test_cache, 'wb') as outp:
                 pickle.dump(testset, outp, pickle.HIGHEST_PROTOCOL)
-            
+
     trainset = DynamicLoader(trainset, batch_size)
     valset = DynamicLoader(valset, batch_size)
-    testset = DynamicLoader(testset, batch_size)
+    testset = DynamicLoader(testset, batch_size, shuffle=shuffle_test)
     
     output_types = (tf.float32, tf.int32, tf.float32)
     trainset = tf.data.Dataset.from_generator(trainset.__iter__, output_types=output_types).prefetch(3)
@@ -147,6 +147,6 @@ class DynamicLoader():
         self.batch()
         if self.shuffle: np.random.shuffle(self.clusters)
         N = len(self.clusters)
-        for b_idx in sorted(self.clusters[:N]):
+        for b_idx in self.clusters[:N]:
             batch = [self.dataset[i] for i in b_idx]
             yield parse_batch(batch)
