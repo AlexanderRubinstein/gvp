@@ -35,8 +35,8 @@ def make_model(pairwise, copy_top_gvp):
 
     return model
 
-def apply_model(dataset, model, optimizer, model_id, epoch, train, description):
-    loss, acc, confusion = util.loop(dataset, model, train=train, optimizer=optimizer)
+def apply_model(dataset, model, optimizer, model_id, epoch, train, description, pairwise_logits):
+    loss, acc, confusion = util.loop(dataset, model, train=train, optimizer=optimizer, pairwise_logits=pairwise_logits)
     if train:
         util.save_checkpoint(model, optimizer, model_id, epoch)
     print('EPOCH {} {} {:.4f} {:.4f}'.format(epoch, description, loss, acc))
@@ -47,10 +47,14 @@ def main(
     only_eval,
     checkpoint,
     copy_top_gvp,
-    pairwise
+    pairwise,
+    pairwise_logits
 ):
     if not pairwise and copy_top_gvp:
         raise Exception("Trying to copy top gvp to the original model")
+
+    if pairwise_logits and not pairwise:
+        raise Exception("Trying to run train/eval/test loop with pairwise_logits with original model")
 
     trainset, valset, testset = cath_dataset(1800, jsonl_file=dataset_file) # batch size = 1800 residues
     optimizer = tf.keras.optimizers.Adam()
@@ -62,43 +66,59 @@ def main(
         print(f"Loading model from checkpoint: {checkpoint}")
         util.load_checkpoint(model, optimizer, checkpoint)
 
-
-    # loop_func = util.loop
-    # best_epoch, best_val = 0, np.inf
-
     if only_eval:
         if checkpoint is None and not copy_top_gvp:
             raise Exception("Trying to eval with random top_gvp")
-        apply_model(valset, model, optimizer, model_id=None, epoch=None, train=False, description="VAL")
+        apply_model(
+            valset,
+            model,
+            optimizer,
+            model_id=None,
+            epoch=None,
+            train=False,
+            description="VAL",
+            pairwise_logits=pairwise_logits
+        )
     else:
         model_id = int(datetime.timestamp(datetime.now()))
         NUM_EPOCHS = 100
         for epoch in range(NUM_EPOCHS):
-        # while epoch < NUM_EPOCHS:
-            # loss, acc, confusion = loop_func(trainset, model, train=True, optimizer=optimizer)
-            # util.save_checkpoint(model, optimizer, model_id, epoch)
-            # print('EPOCH {} TRAIN {:.4f} {:.4f}'.format(epoch, loss, acc))
-            # util.save_confusion(confusion)
-            apply_model(trainset, model, optimizer, model_id, epoch, train=True, description="TRAIN")
-            apply_model(valset, model, optimizer, model_id=None, epoch=epoch, train=False, description="VAL")
 
-            # loss, acc, confusion = loop_func(valset, model, train=False)
-
-            # if loss < best_val:
-            #         best_epoch, best_val = epoch, loss
-
-            # print('EPOCH {} VAL {:.4f} {:.4f}'.format(epoch, loss, acc))
-            # util.save_confusion(confusion)
-            # epoch += 1
+            apply_model(
+                trainset,
+                model,
+                optimizer,
+                model_id,
+                epoch,
+                train=True,
+                description="TRAIN",
+                pairwise_logits=pairwise_logits
+            )
+            apply_model(
+                valset,
+                model,
+                optimizer,
+                model_id=None,
+                epoch=epoch,
+                train=False,
+                description="VAL",
+                pairwise_logits=pairwise_logits
+            )
 
         # Test with best validation loss
         path = util.models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
         util.load_checkpoint(model, optimizer, path)
 
-    # loss, acc, confusion = loop_func(testset, model, train=False)
-    # print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
-    # util.save_confusion(confusion)
-    apply_model(testset, model, optimizer, model_id=None, epoch=None, train=False, description="TEST")
+    apply_model(
+        testset,
+        model,
+        optimizer,
+        model_id=None,
+        epoch=None,
+        train=False,
+        description="TEST",
+        pairwise_logits=pairwise_logits
+    )
 
 def make_parser():
     parser = argparse.ArgumentParser(description='Train/eval script parser')
@@ -112,6 +132,8 @@ def make_parser():
                     help='Whether to init top gvp layer with the one from the CPDmodel featurizer')
     parser.add_argument('--pairwise', action="store_true",
                     help='whether to use pairwise model')
+    parser.add_argument('--pairwise_logits', action="store_true",
+                    help='whether to train for pairwise_logits')
     return parser
 
 if __name__ == "__main__":
@@ -121,5 +143,6 @@ if __name__ == "__main__":
         only_eval=args.only_eval,
         checkpoint=args.checkpoint,
         copy_top_gvp=args.copy_top_gvp,
-        pairwise=args.pairwise
+        pairwise=args.pairwise,
+        pairwise_logits=args.pairwise_logits
     )

@@ -9,6 +9,12 @@ from gvp import *
 from typing import Tuple
 from copy import deepcopy
 
+from util import (
+    make_h_V_pairwise_redneck,
+    make_S_pairwise_redneck,
+    make_mask_pairwise_redneck
+)
+
 class MQAModel(Model):
     def __init__(self, node_features, edge_features,
         hidden_dim, num_layers=3, k_neighbors=30, dropout=0.1):
@@ -102,11 +108,11 @@ class CPDModel(Model):
         h_V, h_E, E_idx = self.encoder_embeddings(X, mask, train=train)
         h_S = self.W_s(S)
         h_V = self.decoder(h_V, h_S, h_E, E_idx, mask, train=train)
-        return h_V
+        return h_V, E_idx
 
     def call(self, X, S, mask, train=False):
         # X [B, N, 4, 3], S [B, N], mask [B, N]
-        h_V = self.train_embeddings(X, S, mask, train=train)
+        h_V, _ = self.train_embeddings(X, S, mask, train=train)
         logits = self.W_out(h_V)
 
         return logits
@@ -157,25 +163,15 @@ class PairwiseCPDModel(Model):
 
         self.node_classificator.trainable = True
 
+        self.pairwise_classificator = GVP(
+            vi=2 * self.hv,
+            vo=0,
+            so=self.num_letters * self.num_letters,
+            nls=None,
+            nlv=None
+        )
 
-        # self.pair_classificator = ??
-
-    # def make_paired_embeddings(self, embeddings: list(tf.Tensor), E_idx: ??):
-    #     _, _, E_idx = self.featurizer.features(X, mask)
-
-    #     ??
-
-    def forward_pairwise(self, X, mask, train=False):
-        embeddings = self.featurizer.sample(X, mask, only_embeddings=True, temperature=self.temperature)
-        _, _, E_idx = self.featurizer.features(X, mask)
-        print("E_idx.shape:", E_idx.shape)
-        # paired_embeddings = self.make_paired_embeddings(embeddings)
-        # logits = self.pair_classificator(paired_embeddings)
-
-        # embeddings_pairwise from X and E_idx
-
-
-        # return logits_pairwise, E_idx
+        self.pairwise_classificator.trainable = True
 
     def inference(self, X, mask, logits_layer, temperature, S=None, train=False):
         if S is None:
@@ -202,7 +198,7 @@ class PairwiseCPDModel(Model):
             return predicted_S
 
         else:
-            h_V_stacked = self.featurizer.train_embeddings(X, S, mask, train=train)
+            h_V_stacked, _ = self.featurizer.train_embeddings(X, S, mask, train=train)
             logits_stacked = logits_layer(h_V_stacked)
 
         return logits_stacked
