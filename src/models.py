@@ -12,7 +12,8 @@ from copy import deepcopy
 from util import (
     make_h_V_pairwise_redneck,
     make_S_pairwise_redneck,
-    make_mask_pairwise_redneck
+    make_mask_pairwise_redneck,
+    build_prediction_frequencies_redneck
 )
 
 class MQAModel(Model):
@@ -128,7 +129,7 @@ class CPDModel(Model):
             W_out=self.W_out,
             only_embeddings=only_embeddings,
             temperature=0.1
-        )
+        ), E_idx
 
 class PairwiseCPDModel(Model):
     def __init__(
@@ -176,7 +177,7 @@ class PairwiseCPDModel(Model):
     def inference(self, X, mask, logits_layer, temperature, S=None, train=False):
         if S is None:
             # list with N_nodes tensors of [batch_size, 1, embedding_dim]
-            embeddings = self.featurizer.sample(X, mask, only_embeddings=True, temperature=temperature)
+            embeddings, _ = self.featurizer.sample(X, mask, only_embeddings=True, temperature=temperature)
 
 
             if len(embeddings) == 0:
@@ -209,6 +210,22 @@ class PairwiseCPDModel(Model):
     def sample_independently(self, X, mask, temperature):
         # return self.inference(X, mask, self.featurizer.W_out, temperature)
         return self.inference(X, mask, self.node_classificator, temperature)
+
+    def sample_pairwise(self, X, mask, temperature):
+        embeddings, E_idx = self.featurizer.sample(X, mask, only_embeddings=True, temperature=temperature)
+        E_idx = E_idx.numpy()
+
+        h_V_stacked = tf.squeeze(tf.stack(embeddings, axis=1), axis=2)  # [batch_size, num_nodes, embedding_dim]
+        h_V_pairwise_numpy = make_h_V_pairwise_redneck(h_V_stacked.numpy(), E_idx)
+        h_V_pairwise = tf.convert_to_tensor(h_V_pairwise_numpy)
+        logits_pairwise = self.pairwise_classificator(h_V_pairwise)
+        prediction_frequencies = build_prediction_frequencies_redneck(
+            logits_pairwise.numpy(),
+            E_idx,
+            self.num_letters,
+            onehot_by_argmax=False,
+            mask=mask)
+        return np.argmax(prediction_frequencies, axis=-1)
     
 class Encoder(Model):
     def __init__(self, node_features, edge_features, num_layers=3, dropout=0.1):

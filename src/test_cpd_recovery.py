@@ -35,6 +35,8 @@ def make_parser():
                     help='max number of structs to test on')
     parser.add_argument('--pairwise', action="store_true",
                     help='whether to use pairwise model')
+    parser.add_argument('--pairwise_logits', action="store_true",
+                    help='whether to use predict from pairwise logits')
     parser.add_argument('--n_runs', type=int, default=100,
                     help='number of runs to calculate mean result from')
     return parser
@@ -44,6 +46,12 @@ if __name__ == "__main__":
 
     if not args.pairwise and args.model_path is None:
         raise Exception("No model filepath for original model")
+
+    if args.pairwise_logits and not args.pairwise:
+        raise Exception("Trying to run predict from logits_pairwise with original model")
+
+    if args.pairwise_logits and not args.model_path:
+        raise Exception("Trying to predict from logits_pairwise with untrained pairwise_classificator")
 
     optimizer = tf.keras.optimizers.Adam()
 
@@ -86,8 +94,12 @@ if __name__ == "__main__":
         idx = 0
         while (idx < N):
             my_n = min(n, N-idx)
-            pred = sample(model.sample_independently if args.pairwise else model.sample, structure, mask, my_n)
-            design[idx:idx+my_n] = tf.cast(pred, tf.int32).numpy()
+            if args.pairwise_logits:
+                pred = sample(model.sample_pairwise, structure, mask, my_n)
+            else:
+                pred = sample(model.sample_independently if args.pairwise else model.sample, structure, mask, my_n)
+                pred = tf.cast(pred, tf.int32).numpy()
+            design[idx:idx+my_n] = pred
             idx += min(n, N-idx)
 
         seq = seq.numpy()

@@ -14,21 +14,17 @@ from util import (
     make_S_pairwise_redneck,
     make_mask_pairwise_redneck,
     labels_pair_to_pairwise_label,
-    pairwise_label_to_labels_pair
+    pairwise_label_to_labels_pair,
+    build_prediction_frequencies_redneck
+)
+tf.random.set_seed(
+    14
 )
 
 TEST_STRUCTS = os.path.join("..", "data", "unittest_data", "test_structure.pkl")
 
 
 # tests
-
-def test_label_conversion():
-    for i in range(400):
-        assert(i == labels_pair_to_pairwise_label(pairwise_label_to_labels_pair(i, 20), 20))
-    for i in range(20):
-        for j in range(20):
-            assert([i,j] == pairwise_label_to_labels_pair(labels_pair_to_pairwise_label([i, j], 20), 20))
-    print("test_label_conversion: OK")
 
 def test_models_equivalence():
     with open(TEST_STRUCTS, 'rb') as inp:
@@ -50,6 +46,14 @@ def test_models_equivalence():
 
     assert np.isclose(original_result, pairwise_result).all()
     print("test_models_equivalence: OK")
+
+def test_label_convertation():
+    for i in range(400):
+        assert(i == labels_pair_to_pairwise_label(pairwise_label_to_labels_pair(i, 20), 20))
+    for i in range(20):
+        for j in range(20):
+            assert([i,j] == pairwise_label_to_labels_pair(labels_pair_to_pairwise_label([i, j], 20), 20))
+    print("test_label_convertation: OK")
 
 def test_pairwise_embeddings():
 
@@ -316,9 +320,127 @@ def test_pairwise_mask():
     assert np.isclose(mask_pairwise, expected_mask_pairwise).all()
     print("test_pairwise_mask: OK")
 
+def make_pairwise_model(num_letters, copy_top_gvp=False):
+    model = CPDModel(node_features=(8, 100), edge_features=(1,32), hidden_dim=(16,100))
+
+    optimizer = tf.keras.optimizers.Adam()
+    util.load_checkpoint(model, optimizer, FEATURIZER_PATH)
+
+    return PairwiseCPDModel(model, num_letters=num_letters, hidden_dim=(16,100), copy_top_gvp=copy_top_gvp)
+
+def test_frequencies_from_logits_pairwise():
+
+    # [batch_size, n_nodes)]
+    mask_for_test = np.array(
+        [
+            [1, 1, 1, 1, 0],
+            [1, 1, 1, 1, 1]
+        ]
+    )
+
+    # n_neighbours = k = 2
+    # [batch_size, n_nodes, n_neighbours)]
+    E_idx_for_test = np.array(
+        [
+            [
+                [1, 2],  # nearest for 0
+                [0, 2],  # nearest for 1
+                [1, 3],  # nearest for 2
+                [2, 1],  # nearest for 3
+                [0, 1]  # np.arange(2)
+            ],
+            [
+                [1, 2],  # nearest for 0
+                [0, 2],  # nearest for 1
+                [1, 3],  # nearest for 2
+                [2, 4],  # nearest for 3
+                [3, 2]  # nearest for 4
+            ]
+        ]
+    )
+
+    num_single_labels = 3
+
+    # ground_truth: batch0: v0=1, v1=2, v2=2, v3=0, v4=masked
+    # ground_truth: batch1: v0=0, v1=1, v2=2, v3=1, v4=0
+
+    logits_pairwise_for_test = np.array(
+        [
+            [
+                [
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10],  # 1 * 3 + 2 = 5  # [1, 2],  #  0 -> 1
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10]  # 1 * 3 + 2 = 5  # [1, 2]  #  0 -> 2
+                ],
+                [
+                    [-10, -10, -10, -10, -10, -10, -10, 1000, -10],  # 2 * 3 + 1 = 7  # [2, 1],  #  1 -> 0
+                    [-10, -10, -10, -10, -10, -10, -10, -10, 1000]  # 2 * 3 + 2 = 8  # [2, 2]  #  1 -> 2
+                ],
+                [
+                    [-10, -10, -10, -10, -10, -10, -10, -10, 1000],  # 2 * 3 + 2 = 8  # [2, 2],  #  2 -> 1
+                    [-10, -10, -10, -10, -10, -10, 1000, -10, -10]  # 2 * 3 + 0 = 6  # [2, 0]  #  2 -> 3
+                ],
+                [
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10],  # 0 * 3 + 2 = 2  # [0, 2],  #  3 -> 2
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10]  # 0 * 3 + 2 = 2  # [0, 2]  #  3 -> 1
+                ],
+                [
+                    [1, 2, 3, 4, 5, 6, 7, 8, 9],  # some logits that will be masked,  #  masked 0
+                    [9, 8, 7, 6, 5, 4, 3, 2, 1]  # some logits that will be masked  #  masked 1
+                ],
+            ],
+            [
+                [
+                    [-10, 1000, -10, -10, -10, -10, -10, -10, -10],  # 0 * 3 + 1 = 1  # [0, 1],  #  0 -> 1
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10]  # 0 * 3 + 2 = 2  # [0, 2]  #  0 -> 2
+                ],
+                [
+                    [-10, -10, -10, 1000, -10, -10, -10, -10, -10],  # 1 * 3 + 0 = 3  # [1, 0],  #  1 -> 0
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10]  # 1 * 3 + 2 = 5  # [1, 2]  #  1 -> 2
+                ],
+                [
+                    [-10, -10, -10, -10, -10, -10, -10, 1000, -10],  # 2 * 3 + 1 = 7  # [2, 1],  #  2 -> 1
+                    [-10, -10, -10, -10, -10, -10, -10, 1000, -10]  # 2 * 3 + 1 = 7  # [2, 1]  #  2 -> 3
+                ],
+                [
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10],  # 1 * 3 + 2 = 5  # [1, 2],  #  3 -> 2
+                    [-10, -10, -10, 1000, -10, -10, -10, -10, -10]  # 1 * 3 + 0 = 3  # [1, 0]  # 3 -> 4
+                ],
+                [
+                    [-10, 1000, -10, -10, -10, -10, -10, -10, -10],  # 0 * 3 + 1 = 1  # [0, 1],  #  4 -> 3
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10]  # 0 * 3 + 2 = 2  # [0, 2]  #  4 -> 2
+                ],
+            ]
+        ]
+    )
+
+    expected_prediction_frequencies = np.array(
+        [
+            [
+                [0, 3, 0],  # for 0 based on: 0 -> 1 [1, 2], 0 -> 2 [1, 2], 1 -> 0 [2, 1]
+                [0, 0, 5],  # for 1 based on: 0 -> 1 [1, 2], 1 -> 0 [2, 1], 1 -> 2 [2, 2], 2 -> 1 [2, 2], 3 -> 1 [0, 2]
+                [0, 0, 5],  # for 2 based on: 0 -> 2 [1, 2], 1 -> 2 [2, 2], 2 -> 1 [2, 2], 2 -> 3 [2, 0], 3 -> 2 [0, 2]
+                [3, 0, 0],  # for 3 based on: 2 -> 3 [2, 0], 3 -> 2 [0, 2], 3 -> 1 [0, 2]
+                [0, 0, 0]  # 0 instead of frequencies for masked
+            ],
+            [
+                [3, 0, 0],  # for 0 based on: 0 -> 1 [0, 1], 0 -> 2 [0, 2], 1 -> 0 [1, 0]
+                [0, 4, 0],  # for 1 based on: 0 -> 1 [0, 1], 1 -> 0 [1, 0], 1 -> 2 [1, 2], 2 -> 1 [2, 1]
+                [0, 0, 6],  # for 2 based on: 0 -> 2 [0, 2], 1 -> 2 [1, 2], 2 -> 1 [2, 1], 2 -> 3 [2, 1], 3 -> 2 [1, 2], 4 -> 2 [0, 2]
+                [0, 4, 0],  # for 3 based on: 2 -> 3 [2, 1], 3 -> 2 [1, 2], 3 -> 4 [1, 0], 4 -> 3 [0, 1]
+                [3, 0, 0]  # for 4 based on: 3 -> 4 [1, 0], 4 -> 3 [0, 1], 4 -> 2 [0, 2]
+            ]
+        ]
+    )
+
+    prediction_frequencies = build_prediction_frequencies_redneck(logits_pairwise_for_test, E_idx_for_test, num_single_labels, onehot_by_argmax=False, mask=mask_for_test)
+
+    assert np.isclose(prediction_frequencies, expected_prediction_frequencies).all()
+    print("test_frequencies_from_logits_pairwise: OK")
+
 if __name__ == "__main__":
-    test_label_conversion()
     test_models_equivalence()
+    test_label_convertation()
     test_pairwise_embeddings()
     test_pairwise_sequences()
     test_pairwise_mask()
+    test_frequencies_from_logits_pairwise()

@@ -40,12 +40,12 @@ def loop(dataset, model, train=False, optimizer=None, pairwise_logits=False):
             S_pairwise = tf.convert_to_tensor(S_pairwise_numpy)
             M_pairwise = tf.convert_to_tensor(M_pairwise_numpy)
             if train:
-                print("pairwise_logits mode in train")
+                print("\npairwise_logits mode in train")
                 with tf.GradientTape() as tape:
                     logits_pairwise = model.pairwise_classificator(h_V_pairwise)  # [batch_size, n_nodes, n_neighbours, 400]
                     loss_value = loss_fn(S_pairwise, logits_pairwise, sample_weight=M_pairwise)
             else:
-                print("pairwise_logits mode in eval/test")
+                print("\npairwise_logits mode in eval/test")
                 logits_pairwise = model.pairwise_classificator(h_V_pairwise)  # [batch_size, n_nodes, n_neighbours, 400]
                 loss_value = loss_fn(S_pairwise, logits_pairwise, sample_weight=M_pairwise)
 
@@ -172,3 +172,28 @@ def labels_pair_to_pairwise_label(labels_pair, num_single_labels):
 
 def pairwise_label_to_labels_pair(pairwise_label, num_single_labels):
     return [pairwise_label // num_single_labels, pairwise_label % num_single_labels]
+
+# [batch_size, n_nodes, n_letters = num_single_labels)]
+# compute predicted labels frequencies from logits_pairwise for each node
+def build_prediction_frequencies_redneck(logits_pairwise, E_idx, num_single_labels, onehot_by_argmax, mask):
+    prediction_frequencies = np.zeros(logits_pairwise.shape[:-2] + tuple([num_single_labels]))
+    input_shape = logits_pairwise.shape
+    if onehot_by_argmax:
+        labels_pairwise = np.argmax(logits_pairwise, axis=-1)
+    else:
+        labels_pairwise = tf.random.categorical(tf.convert_to_tensor(logits_pairwise.reshape(-1, input_shape[-1]), dtype=tf.float32), 1)
+        labels_pairwise = (labels_pairwise.numpy()).reshape(input_shape[:-1])
+
+    for batch_idx in range(E_idx.shape[0]):
+        for edge_start in range(E_idx.shape[1]):
+            if mask[batch_idx, edge_start] == 1:
+                for edge_end_idx in range(E_idx.shape[2]):
+                    edge_end = E_idx[batch_idx, edge_start, edge_end_idx]
+
+                    edge_pairwise_label = labels_pairwise[batch_idx, edge_start, edge_end_idx]
+                    edge_start_type, edge_end_type = pairwise_label_to_labels_pair(edge_pairwise_label, num_single_labels)
+
+                    prediction_frequencies[batch_idx, edge_start, edge_start_type] += 1
+                    prediction_frequencies[batch_idx, edge_end, edge_end_type] += 1
+
+    return prediction_frequencies
