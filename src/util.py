@@ -125,7 +125,7 @@ def repeat_block_n(a, block_size, n_times):
     return result
 
 # make embedding for each pair by concatenating two corresponding node embeddings
-# [batch_size, n_nodes, n_neighbours, 2 * h_dim)]
+# [batch_size, n_nodes, n_neighbours, 2 * h_dim]
 def make_h_V_pairwise_redneck(h_V, E_idx):
     h_dim = h_V.shape[-1]
     result_shape = (E_idx.shape) + tuple([2 * h_dim])
@@ -141,7 +141,7 @@ def make_h_V_pairwise_redneck(h_V, E_idx):
     return result.reshape(result_shape)
 
 # write amino types for each two neighbour nodes
-# [batch_size, n_nodes, n_neighbours, 2)]
+# [batch_size, n_nodes, n_neighbours, 2]
 def make_S_pairwise_redneck(S, E_idx, num_single_labels):
     result_shape = (E_idx.shape) + tuple([2])
     result = np.zeros((result_shape[0], result_shape[1] * result_shape[2], result_shape[3]))
@@ -156,7 +156,7 @@ def make_S_pairwise_redneck(S, E_idx, num_single_labels):
     return result.reshape(result_shape[:-1])
 
 # make mask with zeros for pairs that involve masked nodes
-# [batch_size, n_nodes, n_neighbours, 1)]
+# [batch_size, n_nodes, n_neighbours, 1]
 def make_mask_pairwise_redneck(mask, E_idx):
     result_shape = (E_idx.shape)
     result = np.zeros((result_shape[0], result_shape[1] * result_shape[2]))
@@ -173,7 +173,7 @@ def labels_pair_to_pairwise_label(labels_pair, num_single_labels):
 def pairwise_label_to_labels_pair(pairwise_label, num_single_labels):
     return [pairwise_label // num_single_labels, pairwise_label % num_single_labels]
 
-# [batch_size, n_nodes, n_letters = num_single_labels)]
+# [batch_size, n_nodes, n_letters = num_single_labels]
 # compute predicted labels frequencies from logits_pairwise for each node
 def build_prediction_frequencies_redneck(logits_pairwise, E_idx, num_single_labels, onehot_by_argmax, mask):
     prediction_frequencies = np.zeros(logits_pairwise.shape[:-2] + tuple([num_single_labels]))
@@ -197,3 +197,50 @@ def build_prediction_frequencies_redneck(logits_pairwise, E_idx, num_single_labe
                     prediction_frequencies[batch_idx, edge_end, edge_end_type] += 1
 
     return prediction_frequencies
+
+def compute_indices_affecting_edge_types(num_single_labels):
+    indices_affecting_first_type = [[] for i in range(num_single_labels)]
+    indices_affecting_second_type = [[] for i in range(num_single_labels)]
+
+    for idx in range(num_single_labels * num_single_labels):
+        first_type, second_type = pairwise_label_to_labels_pair(idx, num_single_labels)
+        indices_affecting_first_type[first_type].append(idx)
+        indices_affecting_second_type[second_type].append(idx)
+
+    return indices_affecting_first_type, indices_affecting_second_type
+
+def extend_mask_for_last_dims(mask, arr):
+    assert len(mask.shape) < len(arr.shape)
+    repeated_mask = mask
+    for i in range(len(mask.shape), len(arr.shape)):
+        repeated_mask = repeated_mask[..., None]
+        repeated_mask = np.repeat(repeated_mask, arr.shape[i], axis=-1)
+    return repeated_mask
+
+# [batch_size, n_nodes, n_letters = num_single_labels]
+# compute residuewise logits from pairwise logits
+def build_logits_residuewise_redneck(logits_pairwise, E_idx, num_single_labels, mask):
+    logits_residuewise = np.zeros(logits_pairwise.shape[:-2] + tuple([num_single_labels]))
+
+    repeated_mask = extend_mask_for_last_dims(mask, logits_pairwise)
+
+    logits_pairwise = np.where(repeated_mask, logits_pairwise, 0)
+
+    indices_affecting_first_type, indices_affecting_second_type = compute_indices_affecting_edge_types(num_single_labels)
+
+    edge_starts = [i for i in range(logits_pairwise.shape[1])]
+
+    intermediate_sum_first = logits_pairwise[:, :, :, indices_affecting_first_type].sum(-1)
+    intermediate_sum_second = logits_pairwise[:, :, :, indices_affecting_second_type].sum(-1)
+
+    logits_residuewise[:, edge_starts, :] += intermediate_sum_first[:, edge_starts, :, :].sum(2)
+
+    for batch_idx in range(logits_pairwise.shape[0]):
+        edge_starts = [i for i in range(logits_pairwise.shape[1])]
+        edge_ends = E_idx[batch_idx, :, :]
+
+        # need loop here because can not update inplace the same node from different edges simultaneously
+        for edge_start, edge_end in zip(edge_starts, edge_ends):
+            logits_residuewise[batch_idx, edge_end, :] += intermediate_sum_second[batch_idx, edge_start, :, :]
+
+    return logits_residuewise

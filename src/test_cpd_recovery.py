@@ -36,9 +36,11 @@ def make_parser():
     parser.add_argument('--pairwise', action="store_true",
                     help='whether to use pairwise model')
     parser.add_argument('--pairwise_logits', action="store_true",
-                    help='whether to use predict from pairwise logits')
+                    help='whether to predict from pairwise logits')
     parser.add_argument('--n_runs', type=int, default=100,
                     help='number of runs to calculate mean result from')
+    parser.add_argument('--prediction_type', type=str, default=None,
+                    help='how to predict residue label from pairwise logits', choices=["frequency", "logits_sum", None])
     return parser
 
 if __name__ == "__main__":
@@ -52,6 +54,12 @@ if __name__ == "__main__":
 
     if args.pairwise_logits and not args.model_path:
         raise Exception("Trying to predict from logits_pairwise with untrained pairwise_classificator")
+
+    if args.prediction_type is not None and not args.pairwise_logits:
+        raise Exception(f"Prediction_type '{args.prediction_type}' specified without --pairwise_logits argument")
+
+    if args.prediction_type is None and args.pairwise_logits:
+        raise Exception(f"--prediction_type argument not specified while using --pairwise_logits")
 
     optimizer = tf.keras.optimizers.Adam()
 
@@ -95,7 +103,10 @@ if __name__ == "__main__":
         while (idx < N):
             my_n = min(n, N-idx)
             if args.pairwise_logits:
-                pred = sample(model.sample_pairwise, structure, mask, my_n)
+                if args.prediction_type == "frequency":
+                    pred = sample(model.sample_pairwise_from_frequencies, structure, mask, my_n)
+                elif args.prediction_type == "logits_sum":
+                    pred = sample(model.sample_pairwise_from_logits_sum, structure, mask, my_n)
             else:
                 pred = sample(model.sample_independently if args.pairwise else model.sample, structure, mask, my_n)
                 pred = tf.cast(pred, tf.int32).numpy()

@@ -13,7 +13,8 @@ from util import (
     make_h_V_pairwise_redneck,
     make_S_pairwise_redneck,
     make_mask_pairwise_redneck,
-    build_prediction_frequencies_redneck
+    build_prediction_frequencies_redneck,
+    build_logits_residuewise_redneck
 )
 
 class MQAModel(Model):
@@ -211,7 +212,13 @@ class PairwiseCPDModel(Model):
         # return self.inference(X, mask, self.featurizer.W_out, temperature)
         return self.inference(X, mask, self.node_classificator, temperature)
 
-    def sample_pairwise(self, X, mask, temperature):
+    def sample_pairwise_from_frequencies(self, X, mask, temperature):
+        return self.sample_pairwise(X, mask, temperature, prediction_type="frequency")
+
+    def sample_pairwise_from_logits_sum(self, X, mask, temperature):
+        return self.sample_pairwise(X, mask, temperature, prediction_type="logits_sum")
+
+    def sample_pairwise(self, X, mask, temperature, prediction_type):
         embeddings, E_idx = self.featurizer.sample(X, mask, only_embeddings=True, temperature=temperature)
         E_idx = E_idx.numpy()
 
@@ -219,13 +226,25 @@ class PairwiseCPDModel(Model):
         h_V_pairwise_numpy = make_h_V_pairwise_redneck(h_V_stacked.numpy(), E_idx)
         h_V_pairwise = tf.convert_to_tensor(h_V_pairwise_numpy)
         logits_pairwise = self.pairwise_classificator(h_V_pairwise)
-        prediction_frequencies = build_prediction_frequencies_redneck(
-            logits_pairwise.numpy(),
-            E_idx,
-            self.num_letters,
-            onehot_by_argmax=False,
-            mask=mask)
-        return np.argmax(prediction_frequencies, axis=-1)
+        if prediction_type == "frequency":
+            prediction_frequencies = build_prediction_frequencies_redneck(
+                logits_pairwise.numpy(),
+                E_idx,
+                self.num_letters,
+                onehot_by_argmax=False,
+                mask=mask
+            )
+            return np.argmax(prediction_frequencies, axis=-1)
+        elif prediction_type == "logits_sum":
+            residuewise_logits = build_logits_residuewise_redneck(
+                logits_pairwise.numpy(),
+                E_idx,
+                self.num_letters,
+                mask=mask
+            )
+            return np.argmax(residuewise_logits, axis=-1)
+        else:
+            raise Exception(f"Unknown prediction type: {prediction_type}")
     
 class Encoder(Model):
     def __init__(self, node_features, edge_features, num_layers=3, dropout=0.1):
