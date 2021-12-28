@@ -14,7 +14,7 @@ from util import (
     make_S_pairwise_redneck,
     make_mask_pairwise_redneck,
     build_prediction_frequencies_redneck,
-    build_logits_residuewise_redneck
+    build_logits_residuewise
 )
 
 class MQAModel(Model):
@@ -236,7 +236,7 @@ class PairwiseCPDModel(Model):
             )
             return np.argmax(prediction_frequencies, axis=-1)
         elif prediction_type == "logits_sum":
-            residuewise_logits = build_logits_residuewise_redneck(
+            residuewise_logits = build_logits_residuewise(
                 logits_pairwise.numpy(),
                 E_idx,
                 self.num_letters,

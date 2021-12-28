@@ -219,7 +219,7 @@ def extend_mask_for_last_dims(mask, arr):
 
 # [batch_size, n_nodes, n_letters = num_single_labels]
 # compute residuewise logits from pairwise logits
-def build_logits_residuewise_redneck(logits_pairwise, E_idx, num_single_labels, mask):
+def build_logits_residuewise(logits_pairwise, E_idx, num_single_labels, mask):
     logits_residuewise = np.zeros(logits_pairwise.shape[:-2] + tuple([num_single_labels]))
 
     repeated_mask = extend_mask_for_last_dims(mask, logits_pairwise)
@@ -236,11 +236,20 @@ def build_logits_residuewise_redneck(logits_pairwise, E_idx, num_single_labels, 
     logits_residuewise[:, edge_starts, :] += intermediate_sum_first[:, edge_starts, :, :].sum(2)
 
     for batch_idx in range(logits_pairwise.shape[0]):
-        edge_starts = [i for i in range(logits_pairwise.shape[1])]
         edge_ends = E_idx[batch_idx, :, :]
 
         # need loop here because can not update inplace the same node from different edges simultaneously
         for edge_start, edge_end in zip(edge_starts, edge_ends):
             logits_residuewise[batch_idx, edge_end, :] += intermediate_sum_second[batch_idx, edge_start, :, :]
+
+    # solution without for loop over batch dimension works a bit slower:
+
+    # for edge_start in edge_starts:
+    #     addition = intermediate_sum_second[:, edge_start, :, :]
+    #     batch_dim_size = logits_residuewise.shape[0]
+    #     # ensure correct broadcasting, both lhs and rhs should have shape
+    #     # [batch_size, batch_size, n_neighbours, n_letters]
+    #     addition = np.repeat(addition[:, None, :, :], batch_dim_size, axis=1)
+    #     logits_residuewise[:, E_idx[:, edge_start, :], :] += addition
 
     return logits_residuewise

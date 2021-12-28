@@ -6,6 +6,8 @@ import pickle
 import numpy as np
 import tensorflow as tf
 
+import copy
+
 import util
 from constants import FEATURIZER_PATH
 from models import CPDModel, PairwiseCPDModel
@@ -15,7 +17,9 @@ from util import (
     make_mask_pairwise_redneck,
     labels_pair_to_pairwise_label,
     pairwise_label_to_labels_pair,
-    build_prediction_frequencies_redneck
+    build_prediction_frequencies_redneck,
+    compute_indices_affecting_edge_types,
+    build_logits_residuewise
 )
 tf.random.set_seed(
     14
@@ -330,7 +334,7 @@ def make_pairwise_model(num_letters, copy_top_gvp=False):
 
 def test_frequencies_from_logits_pairwise():
 
-    # [batch_size, n_nodes)]
+    # [batch_size, n_nodes]
     mask_for_test = np.array(
         [
             [1, 1, 1, 1, 0],
@@ -339,7 +343,7 @@ def test_frequencies_from_logits_pairwise():
     )
 
     # n_neighbours = k = 2
-    # [batch_size, n_nodes, n_neighbours)]
+    # [batch_size, n_nodes, n_neighbours]
     E_idx_for_test = np.array(
         [
             [
@@ -437,6 +441,378 @@ def test_frequencies_from_logits_pairwise():
     assert np.isclose(prediction_frequencies, expected_prediction_frequencies).all()
     print("test_frequencies_from_logits_pairwise: OK")
 
+def mult_nested_lists(input, mult):
+    if isinstance(input, list):
+        return [mult_nested_lists(input[i], mult) for i in range(len(input))]
+    else:
+        return mult * input
+
+def test_logits_extraction():
+    num_single_labels = 3
+    # type 0: 0 * 3 + 0 = 0, 0 * 3 + 1 = 1, 0 * 3 + 2 = 2 when first; 0 * 3 + 0 = 0, 1 * 3 + 0 = 3, 2 * 3 + 0 = 6 when second
+    # type 1: 1 * 3 + 0 = 3, 1 * 3 + 1 = 4, 1 * 3 + 2 = 5 when first; 0 * 3 + 1 = 1, 1 * 3 + 1 = 4, 2 * 3 + 1 = 7 when second
+    # type 2: 2 * 3 + 0 = 6, 2 * 3 + 1 = 7, 2 * 3 + 2 = 8 when first; 0 * 3 + 2 = 2, 1 * 3 + 2 = 5, 2 * 3 + 2 = 8 when second
+    logits_last_dim = np.array([-11, 1001, -12, -13, -14, -15, -16, -17, -18])
+
+    extracted_for_edge_start = np.zeros((num_single_labels))
+    extracted_for_edge_end = np.zeros((num_single_labels))
+
+    indices_affecting_first_type, indices_affecting_second_type = compute_indices_affecting_edge_types(num_single_labels)
+
+    for i in range(len(indices_affecting_first_type)):
+        extracted_for_edge_start[i] += np.sum(logits_last_dim[..., indices_affecting_first_type[i]])
+        extracted_for_edge_end[i] += np.sum(logits_last_dim[..., indices_affecting_second_type[i]])
+
+    expected_extracted_for_edge_start = np.array(
+        [
+            logits_last_dim[0 * 3 + 0] + logits_last_dim[0 * 3 + 1] + logits_last_dim[0 * 3 + 2],
+            logits_last_dim[1 * 3 + 0] + logits_last_dim[1 * 3 + 1] + logits_last_dim[1 * 3 + 2],
+            logits_last_dim[2 * 3 + 0] + logits_last_dim[2 * 3 + 1] + logits_last_dim[2 * 3 + 2]
+        ]
+    )
+    expected_extracted_for_edge_end = np.array(
+        [
+            logits_last_dim[0 * 3 + 0] + logits_last_dim[1 * 3 + 0] + logits_last_dim[2 * 3 + 0],
+            logits_last_dim[0 * 3 + 1] + logits_last_dim[1 * 3 + 1] + logits_last_dim[2 * 3 + 1],
+            logits_last_dim[0 * 3 + 2] + logits_last_dim[1 * 3 + 2] + logits_last_dim[2 * 3 + 2]
+        ]
+    )
+    assert np.isclose(expected_extracted_for_edge_start, extracted_for_edge_start).all()
+    assert np.isclose(expected_extracted_for_edge_end, extracted_for_edge_end).all()
+    print("test_logits_extraction: OK")
+
+def test_logits_residuewise_from_logits_pairwise():
+    batch1_multiplier = 666
+    mask_batch0 = [1, 1, 1, 1, 0]
+    # [batch_size, n_nodes]
+    mask_for_test = np.array(
+        [
+            mask_batch0,
+            copy.deepcopy(mask_batch0)
+        ]
+    )
+
+    # n_neighbours = k = 2
+    E_idx_batch0 =  \
+        [
+            [1, 2],  # nearest for 0
+            [0, 2],  # nearest for 1
+            [1, 3],  # nearest for 2
+            [2, 1],  # nearest for 3
+            [0, 1]  # np.arange(2)
+        ]
+    # [batch_size, n_nodes, n_neighbours)]
+    E_idx_for_test = np.array(
+        [
+            E_idx_batch0,
+            copy.deepcopy(E_idx_batch0)
+        ]
+    )
+    logits_pairwise_batch0 =  \
+        [
+            [
+                [-11, -12, -13, -14, -15, 1001, -16, -17, -18],  # 1 * 3 + 2 = 5  # [1, 2],  #  0 -> 1
+                [-10, -10, -10, -10, -10, 1002, -10, -10, -10]  # 1 * 3 + 2 = 5  # [1, 2]  #  0 -> 2
+            ],
+            [
+                [-18, -17, -16, -15, -14, -13, -12, 1003, -11],  # 2 * 3 + 1 = 7  # [2, 1],  #  1 -> 0
+                [-22, -33, -44, -55, -66, -77, -88, -99, 1004]  # 2 * 3 + 2 = 8  # [2, 2]  #  1 -> 2
+            ],
+            [
+                [-21, -22, -23, -24, -25, -26, -27, -28, 1005],  # 2 * 3 + 2 = 8  # [2, 2],  #  2 -> 1
+                [21, 22, 23, 24, 25, 26, 1006, 27, 28]  # 2 * 3 + 0 = 6  # [2, 0]  #  2 -> 3
+            ],
+            [
+                [21, 22, 1007, 23, 24, 25, 26, 27, 28],  # 0 * 3 + 2 = 2  # [0, 2],  #  3 -> 2
+                [-28, -27, 1008, -26, -25, -24, -23, -22, -21]  # 0 * 3 + 2 = 2  # [0, 2]  #  3 -> 1
+            ],
+            [
+                [1337, 2, 3, 4, 5, 6, 7, 8, 9],  # some logits that will be masked,  #  masked 0
+                [9, 8, 7, 6, 5, 4, 3, 2, 1]  # some logits that will be masked  #  masked 1
+            ]
+        ]
+
+    logits_pairwise_for_test = np.array(
+        [
+            logits_pairwise_batch0,
+            copy.deepcopy(mult_nested_lists(logits_pairwise_batch0, batch1_multiplier))
+        ]
+    )
+
+    num_single_labels = 3
+
+    # ground_truth: batch0: v0=1, v1=2, v2=2, v3=0, v4=masked
+    # ground_truth: batch1: v0=0, v1=1, v2=2, v3=1, v4=0
+
+    # type 0: 0 * 3 + 0 = 0, 0 * 3 + 1 = 1, 0 * 3 + 2 = 2 when first; 0 * 3 + 0 = 0, 1 * 3 + 0 = 3, 2 * 3 + 0 = 6 when second
+    # type 1: 1 * 3 + 0 = 3, 1 * 3 + 1 = 4, 1 * 3 + 2 = 5 when first; 0 * 3 + 1 = 1, 1 * 3 + 1 = 4, 2 * 3 + 1 = 7 when second
+    # type 2: 2 * 3 + 0 = 6, 2 * 3 + 1 = 7, 2 * 3 + 2 = 8 when first; 0 * 3 + 2 = 2, 1 * 3 + 2 = 5, 2 * 3 + 2 = 8 when second
+    expected_logits_residuewise_batch0 =  \
+        [
+            # for v0 based on: v0 -> v1, v0 -> v2, v1 -> v0
+            [
+                # v0 == 0:
+                # v0 -> v1:
+                # logits(v0 == 0, v1 == 0 aka v0v1 == 0)
+                logits_pairwise_for_test[0, 0, 0, 0 * 3 + 0] \
+                # + logits(v0 == 0, v1 == 1 aka v0v1 == 1)
+                + logits_pairwise_for_test[0, 0, 0, 0 * 3 + 1] \
+                # + logits(v0 == 0, v1 == 2 aka v0v1 == 2)
+                + logits_pairwise_for_test[0, 0, 0, 0 * 3 + 2] \
+                # v0 -> v2:
+                # + logits(v0 == 0, v2 == 0 aka v0v2 == 0)
+                + logits_pairwise_for_test[0, 0, 1, 0 * 3 + 0] \
+                # + logits(v0 == 0, v2 == 1 aka v0v2 == 1)
+                + logits_pairwise_for_test[0, 0, 1, 0 * 3 + 1] \
+                # + logits(v0 == 0, v2 == 2 aka v0v2 == 2)
+                + logits_pairwise_for_test[0, 0, 1, 0 * 3 + 2] \
+                # v1 -> v0:
+                # + logits(v1 == 0, v0 == 0 aka v1v0 == 0)
+                + logits_pairwise_for_test[0, 1, 0, 0 * 3 + 0] \
+                # + logits(v1 == 1, v0 == 0 aka v1v0 == 3)
+                + logits_pairwise_for_test[0, 1, 0, 1 * 3 + 0] \
+                # + logits(v1 == 2, v0 == 0 aka v1v0 == 6)
+                + logits_pairwise_for_test[0, 1, 0, 2 * 3 + 0],
+                # v0 == 1:
+                # v0 -> v1:
+                # logits(v0 == 1, v1 == 0 aka v0v1 == 3)
+                logits_pairwise_for_test[0, 0, 0, 1 * 3 + 0] \
+                # + logits(v0 == 1, v1 == 1 aka v0v1 == 4)
+                + logits_pairwise_for_test[0, 0, 0, 1 * 3 + 1] \
+                # + logits(v0 == 1, v1 == 2 aka v0v1 == 5)
+                + logits_pairwise_for_test[0, 0, 0, 1 * 3 + 2] \
+                # v0 -> v2:
+                # + logits(v0 == 1, v2 == 0 aka v0v2 == 0)
+                + logits_pairwise_for_test[0, 0, 1, 1 * 3 + 0] \
+                # + logits(v0 == 1, v2 == 1 aka v0v2 == 4)
+                + logits_pairwise_for_test[0, 0, 1, 1 * 3 + 1] \
+                # + logits(v0 == 1, v2 == 2 aka v0v2 == 5)
+                + logits_pairwise_for_test[0, 0, 1, 1 * 3 + 2] \
+                # v1 -> v0:
+                # + logits(v1 == 0, v0 == 1 aka v1v0 == 1)
+                + logits_pairwise_for_test[0, 1, 0, 0 * 3 + 1] \
+                # + logits(v1 == 1, v0 == 1 aka v1v0 == 4)
+                + logits_pairwise_for_test[0, 1, 0, 1 * 3 + 1] \
+                # + logits(v1 == 2, v0 == 1 aka v1v0 == 7)
+                + logits_pairwise_for_test[0, 1, 0, 2 * 3 + 1],
+                # v0 == 2:
+                # v0 -> v1:
+                # logits(v0 == 2, v1 == 0 aka v0v1 == 6)
+                logits_pairwise_for_test[0, 0, 0, 2 * 3 + 0] \
+                # + logits(v0 == 2, v1 == 1 aka v0v1 == 7)
+                + logits_pairwise_for_test[0, 0, 0, 2 * 3 + 1] \
+                # + logits(v0 == 2, v1 == 2 aka v0v1 == 8)
+                + logits_pairwise_for_test[0, 0, 0, 2 * 3 + 2] \
+                # v0 -> v2:
+                # + logits(v0 == 2, v2 == 0 aka v0v2 == 6)
+                + logits_pairwise_for_test[0, 0, 1, 2 * 3 + 0] \
+                # + logits(v0 == 2, v2 == 1 aka v0v2 == 7)
+                + logits_pairwise_for_test[0, 0, 1, 2 * 3 + 1] \
+                # + logits(v0 == 2, v2 == 2 aka v0v2 == 8)
+                + logits_pairwise_for_test[0, 0, 1, 2 * 3 + 2] \
+                # v1 -> v0:
+                # + logits(v1 == 0, v0 == 2 aka v1v0 == 2)
+                + logits_pairwise_for_test[0, 1, 0, 0 * 3 + 2] \
+                # + logits(v1 == 1, v0 == 2 aka v1v0 == 5)
+                + logits_pairwise_for_test[0, 1, 0, 1 * 3 + 2] \
+                # + logits(v1 == 2, v0 == 2 aka v1v0 == 8)
+                + logits_pairwise_for_test[0, 1, 0, 2 * 3 + 2]
+            ],
+            # for v1 based on: v0 -> v1, v1 -> v0, v1 -> v2, v2 -> v1, v3 -> v1
+            [
+                # v1 == 0:
+                # v0 -> v1:
+                logits_pairwise_for_test[0, 0, 0, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 0, 0, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 0, 0, 2 * 3 + 0] \
+                # v1 -> v0:
+                + logits_pairwise_for_test[0, 1, 0, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 0, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 0, 0 * 3 + 2] \
+                # v1 -> v2:
+                + logits_pairwise_for_test[0, 1, 1, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 1, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 1, 0 * 3 + 2] \
+                # v2 -> v1:
+                + logits_pairwise_for_test[0, 2, 0, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 0, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 0, 2 * 3 + 0] \
+                # v3 -> v1:
+                + logits_pairwise_for_test[0, 3, 1, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 1, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 1, 2 * 3 + 0],
+                # v1 == 1:
+                # v0 -> v1:
+                logits_pairwise_for_test[0, 0, 0, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 0, 0, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 0, 0, 2 * 3 + 1] \
+                # v1 -> v0:
+                + logits_pairwise_for_test[0, 1, 0, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 0, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 0, 1 * 3 + 2] \
+                # v1 -> v2:
+                + logits_pairwise_for_test[0, 1, 1, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 1, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 1, 1 * 3 + 2] \
+                # v2 -> v1:
+                + logits_pairwise_for_test[0, 2, 0, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 0, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 0, 2 * 3 + 1] \
+                # v3 -> v1:
+                + logits_pairwise_for_test[0, 3, 1, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 1, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 1, 2 * 3 + 1],
+                # v1 == 2:
+                # v0 -> v1:
+                logits_pairwise_for_test[0, 0, 0, 0 * 3 + 2] \
+                + logits_pairwise_for_test[0, 0, 0, 1 * 3 + 2] \
+                + logits_pairwise_for_test[0, 0, 0, 2 * 3 + 2] \
+                # v1 -> v0:
+                + logits_pairwise_for_test[0, 1, 0, 2 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 0, 2 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 0, 2 * 3 + 2] \
+                # v1 -> v2:
+                + logits_pairwise_for_test[0, 1, 1, 2 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 1, 2 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 1, 2 * 3 + 2] \
+                # v2 -> v1:
+                + logits_pairwise_for_test[0, 2, 0, 0 * 3 + 2] \
+                + logits_pairwise_for_test[0, 2, 0, 1 * 3 + 2] \
+                + logits_pairwise_for_test[0, 2, 0, 2 * 3 + 2] \
+                # v3 -> v1:
+                + logits_pairwise_for_test[0, 3, 1, 0 * 3 + 2] \
+                + logits_pairwise_for_test[0, 3, 1, 1 * 3 + 2] \
+                + logits_pairwise_for_test[0, 3, 1, 2 * 3 + 2]
+            ],
+            # for v2 based on: v0 -> v2, v1 -> v2, v2 -> v1, v2 -> v3, v3 -> v2
+            [
+                # v2 == 0:
+                # v0 -> v2:
+                logits_pairwise_for_test[0, 0, 1, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 0, 1, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 0, 1, 2 * 3 + 0] \
+                # v1 -> v2:
+                + logits_pairwise_for_test[0, 1, 1, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 1, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 1, 1, 2 * 3 + 0] \
+                # v2 -> v1:
+                + logits_pairwise_for_test[0, 2, 0, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 0, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 0, 0 * 3 + 2] \
+                # v2 -> v3:
+                + logits_pairwise_for_test[0, 2, 1, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 1, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 1, 0 * 3 + 2] \
+                # v3 -> v2:
+                + logits_pairwise_for_test[0, 3, 0, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 0, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 0, 2 * 3 + 0],
+                # v2 == 1:
+                # v0 -> v2:
+                logits_pairwise_for_test[0, 0, 1, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 0, 1, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 0, 1, 2 * 3 + 1] \
+                # v1 -> v2:
+                + logits_pairwise_for_test[0, 1, 1, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 1, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 1, 1, 2 * 3 + 1] \
+                # v2 -> v1:
+                + logits_pairwise_for_test[0, 2, 0, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 0, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 0, 1 * 3 + 2] \
+                # v2 -> v3:
+                + logits_pairwise_for_test[0, 2, 1, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 1, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 1, 1 * 3 + 2] \
+                # v3 -> v2:
+                + logits_pairwise_for_test[0, 3, 0, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 0, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 0, 2 * 3 + 1],
+                # v2 == 2:
+                # v0 -> v2:
+                logits_pairwise_for_test[0, 0, 1, 0 * 3 + 2] \
+                + logits_pairwise_for_test[0, 0, 1, 1 * 3 + 2] \
+                + logits_pairwise_for_test[0, 0, 1, 2 * 3 + 2] \
+                # v1 -> v2:
+                + logits_pairwise_for_test[0, 1, 1, 0 * 3 + 2] \
+                + logits_pairwise_for_test[0, 1, 1, 1 * 3 + 2] \
+                + logits_pairwise_for_test[0, 1, 1, 2 * 3 + 2] \
+                # v2 -> v1:
+                + logits_pairwise_for_test[0, 2, 0, 2 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 0, 2 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 0, 2 * 3 + 2] \
+                # v2 -> v3:
+                + logits_pairwise_for_test[0, 2, 1, 2 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 1, 2 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 1, 2 * 3 + 2] \
+                # v3 -> v2:
+                + logits_pairwise_for_test[0, 3, 0, 0 * 3 + 2] \
+                + logits_pairwise_for_test[0, 3, 0, 1 * 3 + 2] \
+                + logits_pairwise_for_test[0, 3, 0, 2 * 3 + 2]
+            ],
+            # for v3 based on: v2 -> v3, v3 -> v2, v3 -> v1
+            [
+                # v3 == 0:
+                # v2 -> v3:
+                logits_pairwise_for_test[0, 2, 1, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 1, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 2, 1, 2 * 3 + 0] \
+                # v3 -> v2:
+                + logits_pairwise_for_test[0, 3, 0, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 0, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 0, 0 * 3 + 2] \
+                # v3 -> v1:
+                + logits_pairwise_for_test[0, 3, 1, 0 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 1, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 1, 0 * 3 + 2],
+                # v3 == 1:
+                # v2 -> v3:
+                logits_pairwise_for_test[0, 2, 1, 0 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 1, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 2, 1, 2 * 3 + 1] \
+                # v3 -> v2:
+                + logits_pairwise_for_test[0, 3, 0, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 0, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 0, 1 * 3 + 2] \
+                # v3 -> v1:
+                + logits_pairwise_for_test[0, 3, 1, 1 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 1, 1 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 1, 1 * 3 + 2],
+                # v3 == 2:
+                # v2 -> v3:
+                logits_pairwise_for_test[0, 2, 1, 0 * 3 + 2] \
+                + logits_pairwise_for_test[0, 2, 1, 1 * 3 + 2] \
+                + logits_pairwise_for_test[0, 2, 1, 2 * 3 + 2] \
+                # v3 -> v2:
+                + logits_pairwise_for_test[0, 3, 0, 2 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 0, 2 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 0, 2 * 3 + 2] \
+                # v3 -> v1:
+                + logits_pairwise_for_test[0, 3, 1, 2 * 3 + 0] \
+                + logits_pairwise_for_test[0, 3, 1, 2 * 3 + 1] \
+                + logits_pairwise_for_test[0, 3, 1, 2 * 3 + 2]
+            ],
+            # 0 instead of residuewise logits for masked
+            [
+                0,
+                0,
+                0
+            ]
+        ]
+
+    expected_logits_residuewise = np.array(
+        [
+            expected_logits_residuewise_batch0,
+            copy.deepcopy(mult_nested_lists(expected_logits_residuewise_batch0, batch1_multiplier))
+        ]
+    )
+
+    logits_residuewise = build_logits_residuewise(logits_pairwise_for_test, E_idx_for_test, num_single_labels, mask_for_test)
+
+    assert np.isclose(logits_residuewise, expected_logits_residuewise).all()
+    print("test_logits_residuewise_from_logits_pairwise: OK")
+
+
 if __name__ == "__main__":
     test_models_equivalence()
     test_label_convertation()
@@ -444,3 +820,5 @@ if __name__ == "__main__":
     test_pairwise_sequences()
     test_pairwise_mask()
     test_frequencies_from_logits_pairwise()
+    test_logits_extraction()
+    test_logits_residuewise_from_logits_pairwise()
