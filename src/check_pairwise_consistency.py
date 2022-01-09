@@ -19,6 +19,8 @@ def make_parser():
                     help='what kind of test set to use', choices=["cath", "short", "sc", "ts50"])
     parser.add_argument('--output_path', type=str,
                     help='output folder with pairwise histograms')
+    parser.add_argument('--max_structs', type=int, default=0,
+                    help='max number of structs to check')
     return parser
 
 def plot_consistency_histogram(prediction_frequencies, output_path, idx, num_letters=20):
@@ -26,7 +28,7 @@ def plot_consistency_histogram(prediction_frequencies, output_path, idx, num_let
     n_residues = prediction_frequencies.shape[0]
     ncols = 3
     nrows = int(np.ceil(n_residues / (1.0 * ncols)))
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(30, 30))
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(ncols * 10, nrows * 5))
 
     for residue_idx in range(n_residues):
 
@@ -77,4 +79,5 @@ if __name__ == "__main__":
         prediction_frequencies = model.sample_pairwise_before_argmax(structure, mask, temperature, "frequency")
         plot_consistency_histogram(prediction_frequencies.squeeze(0), args.output_path, idx)
         idx += 1
-        break
+        if args.max_structs > 0 and idx == args.max_structs:
+            break
