@@ -17,7 +17,7 @@ def make_parser():
                     help='path to the model to check')
     parser.add_argument('--test_type', type=str,
                     help='what kind of test set to use', choices=["cath", "short", "sc", "ts50"])
-    parser.add_argument('--output_path', type=str,
+    parser.add_argument('--output_path', type=str, required=True,
                     help='output folder with pairwise histograms')
     parser.add_argument('--max_structs', type=int, default=0,
                     help='max number of structs to check')
