@@ -21,7 +21,7 @@ def recovery(designs, orig):
 def sample(sampling_method, structure, mask, n, T=0.1): # [1, N, 4, 3]
     structure = tf.repeat(structure, n, axis=0)
     mask = tf.repeat(mask, n, axis=0)
-    return sampling_method(structure, mask, temperature=0.1)
+    return sampling_method(structure, mask, temperature=T)
 
 def make_parser():
     parser = argparse.ArgumentParser(description='test cpd script parser')
@@ -63,13 +63,13 @@ if __name__ == "__main__":
 
     optimizer = tf.keras.optimizers.Adam()
 
-    featurizer = CPDModel(node_features=(8, 100), edge_features=(1,32), hidden_dim=(16,100))
+    featurizer = CPDModel(node_features=(8, 100), edge_features=(1, 32), hidden_dim=(16, 100))
 
     if args.pairwise:
 
         util.load_checkpoint(featurizer, optimizer, FEATURIZER_PATH)
 
-        model = PairwiseCPDModel(featurizer, num_letters=20, hidden_dim=(16,100), copy_top_gvp=True)
+        model = PairwiseCPDModel(featurizer, num_letters=20, hidden_dim=(16, 100), copy_top_gvp=True)
 
         if args.model_path:
             util.load_checkpoint(model, optimizer, args.model_path)

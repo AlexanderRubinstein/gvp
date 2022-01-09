@@ -218,7 +218,7 @@ class PairwiseCPDModel(Model):
     def sample_pairwise_from_logits_sum(self, X, mask, temperature):
         return self.sample_pairwise(X, mask, temperature, prediction_type="logits_sum")
 
-    def sample_pairwise(self, X, mask, temperature, prediction_type):
+    def sample_pairwise_before_argmax(self, X, mask, temperature, prediction_type):
         embeddings, E_idx = self.featurizer.sample(X, mask, only_embeddings=True, temperature=temperature)
         E_idx = E_idx.numpy()
 
@@ -234,7 +234,8 @@ class PairwiseCPDModel(Model):
                 onehot_by_argmax=False,
                 mask=mask
             )
-            return np.argmax(prediction_frequencies, axis=-1)
+
+            return prediction_frequencies
         elif prediction_type == "logits_sum":
             residuewise_logits = build_logits_residuewise(
                 logits_pairwise.numpy(),
@@ -242,9 +243,13 @@ class PairwiseCPDModel(Model):
                 self.num_letters,
                 mask=mask
             )
-            return np.argmax(residuewise_logits, axis=-1)
+
+            return residuewise_logits
         else:
             raise Exception(f"Unknown prediction type: {prediction_type}")
+
+    def sample_pairwise(self, X, mask, temperature, prediction_type):
+        return np.argmax(self.sample_pairwise_before_argmax(X, mask, temperature, prediction_type), axis=-1)
     
 class Encoder(Model):
     def __init__(self, node_features, edge_features, num_layers=3, dropout=0.1):
