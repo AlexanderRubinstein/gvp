@@ -10,6 +10,15 @@ import argparse
 import os
 import pickle
 
+from util import (
+    labels_to_onehot,
+    onehot_to_labels,
+    energy_matrix_from_logits_pairwise
+)
+
+from optimization import solve_gumbel_soft_max_opt
+
+
 from constants import FEATURIZER_PATH
 
 def recovery(designs, orig):
@@ -17,6 +26,41 @@ def recovery(designs, orig):
     arr = (designs == orig)
     arr = arr.sum(1) / L
     return np.mean(arr)
+
+def sample_by_optimizing_energy_wrapper(model):
+    def sample_by_optimizing_energy(X, mask, temperature):
+        logits_pairwise, E_idx = model.sample_logits_pairwise(X, mask, temperature)
+        logits_pairwise = logits_pairwise.numpy()
+        residuewise_logits = build_logits_residuewise(
+            logits_pairwise,
+            E_idx,
+            model.num_letters,
+            mask=mask
+        )
+        preds_from_logits = np.argmax(residuewise_logits, axis=-1)
+        preds_from_optimization = np.zeros_like(preds_from_logits)
+        energy_matrix = energy_matrix_from_logits_pairwise(logits_pairwise, E_idx, mask, model.num_letters)
+        for i in range(logits_pairwise.shape[0]):
+            energy_matrix_i = energy_matrix[i]
+            answer_from_logits = labels_to_onehot(preds_from_logits[i], model.num_letters)
+            energy_from_logits = answer_from_logits.T @ energy_matrix_i @ answer_from_logits
+            print("energy_from_logits:", energy_from_logits)
+            answer_from_optimization, energy_from_optimization = solve_gumbel_soft_max_opt(
+                energy_matrix_i,
+                compute_loss_func=None,
+                minimize=False,
+                n_aminos=model.num_letters,
+                n_epochs=500,
+                n_runs=5,
+                stat=False,
+                verbose=False,
+                tau=1
+            )
+            print("energy_from_optimization:", energy_from_optimization)
+            print("logits sum vs energy optimization seq rec: ", answer_from_optimization.T @ answer_from_logits / (int(answer_from_logits.shape[0] / model.num_letters)))
+            preds_from_optimization[i] = onehot_to_labels(answer_from_optimization, model.num_letters)
+        return preds_from_optimization
+    return sample_by_optimizing_energy
     
 def sample(sampling_method, structure, mask, n, T=0.1): # [1, N, 4, 3]
     structure = tf.repeat(structure, n, axis=0)
@@ -39,8 +83,13 @@ def make_parser():
                     help='whether to predict from pairwise logits')
     parser.add_argument('--n_runs', type=int, default=100,
                     help='number of runs to calculate mean result from')
-    parser.add_argument('--prediction_type', type=str, default=None,
-                    help='how to predict residue label from pairwise logits', choices=["frequency", "logits_sum", None])
+    parser.add_argument(
+        '--prediction_type',
+        type=str,
+        default=None,
+        help='how to predict residue label from pairwise logits',
+        choices=["frequency", "logits_sum", "energy_optimization", None]
+    )
     return parser
 
 if __name__ == "__main__":
@@ -107,6 +156,8 @@ if __name__ == "__main__":
                     pred = sample(model.sample_pairwise_from_frequencies, structure, mask, my_n)
                 elif args.prediction_type == "logits_sum":
                     pred = sample(model.sample_pairwise_from_logits_sum, structure, mask, my_n)
+                elif args.prediction_type == "energy_optimization":
+                    pred = sample(sample_by_optimizing_energy_wrapper(model), structure, mask, my_n)
             else:
                 pred = sample(model.sample_independently if args.pairwise else model.sample, structure, mask, my_n)
                 pred = tf.cast(pred, tf.int32).numpy()

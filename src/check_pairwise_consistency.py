@@ -49,6 +49,7 @@ def plot_consistency_histogram(prediction_frequencies, output_path, idx, num_let
        os.remove(strFile)
 
     fig.savefig(strFile)
+    plt.close()
 
 if __name__ == "__main__":
     args = make_parser().parse_args()

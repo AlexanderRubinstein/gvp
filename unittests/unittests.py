@@ -19,7 +19,10 @@ from util import (
     pairwise_label_to_labels_pair,
     build_prediction_frequencies_redneck,
     compute_indices_affecting_edge_types,
-    build_logits_residuewise
+    build_logits_residuewise,
+    energy_matrix_from_logits_pairwise,
+    labels_to_onehot,
+    onehot_to_labels
 )
 tf.random.set_seed(
     14
@@ -58,6 +61,24 @@ def test_label_convertation():
         for j in range(20):
             assert([i,j] == pairwise_label_to_labels_pair(labels_pair_to_pairwise_label([i, j], 20), 20))
     print("test_label_convertation: OK")
+
+def test_onehot_vs_label():
+
+    labels = np.array(
+        [0, 4, 3, 1, 2, 2]
+    )
+    expected_onehot = np.array(
+        [
+            1, 0, 0, 0, 0,
+            0, 0, 0, 0, 1,
+            0, 0, 0, 1, 0,
+            0, 1, 0, 0, 0,
+            0, 0, 1, 0, 0,
+            0, 0, 1, 0, 0
+        ]
+    )
+    assert(np.isclose(labels, onehot_to_labels(labels_to_onehot(labels, 5), 5)).all())
+    print("test_onehot_vs_label: OK")
 
 def test_pairwise_embeddings():
 
@@ -812,6 +833,437 @@ def test_logits_residuewise_from_logits_pairwise():
     assert np.isclose(logits_residuewise, expected_logits_residuewise).all()
     print("test_logits_residuewise_from_logits_pairwise: OK")
 
+def test_energy_matrix_from_logits_pairwise():
+    # [batch_size, n_nodes]
+    mask_for_test = np.array(
+        [
+            [1, 1, 1, 1, 0],
+            [1, 1, 1, 1, 1]
+        ]
+    )
+
+    # n_neighbours = k = 2
+    # [batch_size, n_nodes, n_neighbours]
+    E_idx_for_test = np.array(
+        [
+            [
+                [1, 2],  # nearest for 0
+                [0, 2],  # nearest for 1
+                [1, 3],  # nearest for 2
+                [2, 1],  # nearest for 3
+                [0, 1]  # np.arange(2)
+            ],
+            [
+                [1, 2],  # nearest for 0
+                [0, 2],  # nearest for 1
+                [1, 3],  # nearest for 2
+                [2, 4],  # nearest for 3
+                [3, 2]  # nearest for 4
+            ]
+        ]
+    )
+
+    num_single_labels = 3
+
+    # ground_truth: batch0: v0=1, v1=2, v2=2, v3=0, v4=masked
+    # ground_truth: batch1: v0=0, v1=1, v2=2, v3=1, v4=0
+
+    logits_pairwise_for_test = np.array(
+        [
+            [
+                [
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10],  # 1 * 3 + 2 = 5  # [1, 2],  #  0 -> 1
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10]  # 1 * 3 + 2 = 5  # [1, 2]  #  0 -> 2
+                ],
+                [
+                    [-10, -10, -10, -10, -10, -10, -10, 1000, -10],  # 2 * 3 + 1 = 7  # [2, 1],  #  1 -> 0
+                    [-10, -10, -10, -10, -10, -10, -10, -10, 1000]  # 2 * 3 + 2 = 8  # [2, 2]  #  1 -> 2
+                ],
+                [
+                    [-10, -10, -10, -10, -10, -10, -10, -10, 1000],  # 2 * 3 + 2 = 8  # [2, 2],  #  2 -> 1
+                    [-10, -10, -10, -10, -10, -10, 1000, -10, -10]  # 2 * 3 + 0 = 6  # [2, 0]  #  2 -> 3
+                ],
+                [
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10],  # 0 * 3 + 2 = 2  # [0, 2],  #  3 -> 2
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10]  # 0 * 3 + 2 = 2  # [0, 2]  #  3 -> 1
+                ],
+                [
+                    [1, 2, 3, 4, 5, 6, 7, 8, 9],  # some logits that will be masked,  #  masked 0
+                    [9, 8, 7, 6, 5, 4, 3, 2, 1]  # some logits that will be masked  #  masked 1
+                ],
+            ],
+            [
+                [
+                    [-10, 1000, -10, -10, -10, -10, -10, -10, -10],  # 0 * 3 + 1 = 1  # [0, 1],  #  0 -> 1
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10]  # 0 * 3 + 2 = 2  # [0, 2]  #  0 -> 2
+                ],
+                [
+                    [-10, -10, -10, 1000, -10, -10, -10, -10, -10],  # 1 * 3 + 0 = 3  # [1, 0],  #  1 -> 0
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10]  # 1 * 3 + 2 = 5  # [1, 2]  #  1 -> 2
+                ],
+                [
+                    [-10, -10, -10, -10, -10, -10, -10, 1000, -10],  # 2 * 3 + 1 = 7  # [2, 1],  #  2 -> 1
+                    [-10, -10, -10, -10, -10, -10, -10, 1000, -10]  # 2 * 3 + 1 = 7  # [2, 1]  #  2 -> 3
+                ],
+                [
+                    [-10, -10, -10, -10, -10, 1000, -10, -10, -10],  # 1 * 3 + 2 = 5  # [1, 2],  #  3 -> 2
+                    [-10, -10, -10, 1000, -10, -10, -10, -10, -10]  # 1 * 3 + 0 = 3  # [1, 0]  # 3 -> 4
+                ],
+                [
+                    [-10, 1000, -10, -10, -10, -10, -10, -10, -10],  # 0 * 3 + 1 = 1  # [0, 1],  #  4 -> 3
+                    [-10, -10, 1000, -10, -10, -10, -10, -10, -10]  # 0 * 3 + 2 = 2  # [0, 2]  #  4 -> 2
+                ],
+            ]
+        ]
+    )
+
+    # expected_energy_matrix = np.zeros((logits_pairwise_for_test.shape[0], mask_for_test.shape[1], mask_for_test.shape[1], num_single_labels, num_single_labels))
+    expected_energy_matrix = np.zeros((logits_pairwise_for_test.shape[0], mask_for_test.shape[1] * num_single_labels, mask_for_test.shape[1] * num_single_labels))
+
+    # # batch 0
+
+    # # 0 -> 1
+    # expected_energy_matrix[0][0][1] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 0 -> 2
+    # expected_energy_matrix[0][0][2] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 1 -> 0
+    # expected_energy_matrix[0][1][0] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, -10],
+    #         [-10, 1000, -10]
+    #     ]
+    # )
+    # # 1 -> 2
+    # expected_energy_matrix[0][1][2] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, -10],
+    #         [-10, -10, 1000]
+    #     ]
+    # )
+    # # 2 -> 1
+    # expected_energy_matrix[0][2][1] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, -10],
+    #         [-10, -10, 1000]
+    #     ]
+    # )
+    # #  2 -> 3
+    # expected_energy_matrix[0][2][3] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, -10],
+    #         [1000, -10, -10]
+    #     ]
+    # )
+    # # 3 -> 2
+    # expected_energy_matrix[0][3][2] = np.array(
+    #     [
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # #  3 -> 1
+    # expected_energy_matrix[0][3][1] = np.array(
+    #     [
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+
+    # # batch 1
+
+    # # 0 -> 1
+    # expected_energy_matrix[1][0][1] = np.array(
+    #     [
+    #         [-10, 1000, -10],
+    #         [-10, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 0 -> 2
+    # expected_energy_matrix[1][0][2] = np.array(
+    #     [
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 1 -> 0
+    # expected_energy_matrix[1][1][0] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [1000, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 1 -> 2
+    # expected_energy_matrix[1][1][2] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 2 -> 1
+    # expected_energy_matrix[1][2][1] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, -10],
+    #         [-10, 1000, -10]
+    #     ]
+    # )
+    # # 2 -> 3
+    # expected_energy_matrix[1][2][3] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, -10],
+    #         [-10, 1000, -10]
+    #     ]
+    # )
+    # # 3 -> 2
+    # expected_energy_matrix[1][3][2] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 3 -> 4
+    # expected_energy_matrix[1][3][4] = np.array(
+    #     [
+    #         [-10, -10, -10],
+    #         [1000, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 4 -> 3
+    # expected_energy_matrix[1][4][3] = np.array(
+    #     [
+    #         [-10, 1000, -10],
+    #         [-10, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+    # # 4 -> 2
+    # expected_energy_matrix[1][4][2] = np.array(
+    #     [
+    #         [-10, -10, 1000],
+    #         [-10, -10, -10],
+    #         [-10, -10, -10]
+    #     ]
+    # )
+
+    # batch 0
+    batch_idx = 0
+
+    # 0 -> 1
+    res_from = 0
+    res_to = 1
+
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, 1000],
+            [-10, -10, -10]
+        ]
+    )
+
+    # 0 -> 2
+    res_from = 0
+    res_to = 2
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, 1000],
+            [-10, -10, -10]
+        ]
+    )
+    # 1 -> 0
+    res_from = 1
+    res_to = 0
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, -10],
+            [-10, 1000, -10]
+        ]
+    )
+    # 1 -> 2
+    res_from = 1
+    res_to = 2
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, -10],
+            [-10, -10, 1000]
+        ]
+    )
+    # 2 -> 1
+    res_from = 2
+    res_to = 1
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, -10],
+            [-10, -10, 1000]
+        ]
+    )
+    #  2 -> 3
+    res_from = 2
+    res_to = 3
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, -10],
+            [1000, -10, -10]
+        ]
+    )
+    # 3 -> 2
+    res_from = 3
+    res_to = 2
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, 1000],
+            [-10, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+    #  3 -> 1
+    res_from = 3
+    res_to = 1
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, 1000],
+            [-10, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+
+    # batch 1
+    batch_idx = 1
+
+    # 0 -> 1
+    res_from = 0
+    res_to = 1
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, 1000, -10],
+            [-10, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+    # 0 -> 2
+    res_from = 0
+    res_to = 2
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, 1000],
+            [-10, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+    # 1 -> 0
+    res_from = 1
+    res_to = 0
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [1000, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+    # 1 -> 2
+    res_from = 1
+    res_to = 2
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, 1000],
+            [-10, -10, -10]
+        ]
+    )
+    # 2 -> 1
+    res_from = 2
+    res_to = 1
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, -10],
+            [-10, 1000, -10]
+        ]
+    )
+    # 2 -> 3
+    res_from = 2
+    res_to = 3
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, -10],
+            [-10, 1000, -10]
+        ]
+    )
+    # 3 -> 2
+    res_from = 3
+    res_to = 2
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [-10, -10, 1000],
+            [-10, -10, -10]
+        ]
+    )
+    # 3 -> 4
+    res_from = 3
+    res_to = 4
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, -10],
+            [1000, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+    # 4 -> 3
+    res_from = 4
+    res_to = 3
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, 1000, -10],
+            [-10, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+    # 4 -> 2
+    res_from = 4
+    res_to = 2
+    expected_energy_matrix[batch_idx, res_from * num_single_labels : (res_from + 1) * num_single_labels, res_to * num_single_labels : (res_to + 1) * num_single_labels] = np.array(
+        [
+            [-10, -10, 1000],
+            [-10, -10, -10],
+            [-10, -10, -10]
+        ]
+    )
+
+    energy_matrix = energy_matrix_from_logits_pairwise(logits_pairwise_for_test, E_idx_for_test, mask_for_test, num_single_labels)
+
+    assert np.isclose(energy_matrix, expected_energy_matrix).all()
+    print("test_energy_matrix_from_logits_pairwise: OK")
 
 if __name__ == "__main__":
     test_models_equivalence()
@@ -822,3 +1274,5 @@ if __name__ == "__main__":
     test_frequencies_from_logits_pairwise()
     test_logits_extraction()
     test_logits_residuewise_from_logits_pairwise()
+    test_energy_matrix_from_logits_pairwise()
+    test_onehot_vs_label()

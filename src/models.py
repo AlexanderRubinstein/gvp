@@ -218,7 +218,7 @@ class PairwiseCPDModel(Model):
     def sample_pairwise_from_logits_sum(self, X, mask, temperature):
         return self.sample_pairwise(X, mask, temperature, prediction_type="logits_sum")
 
-    def sample_pairwise_before_argmax(self, X, mask, temperature, prediction_type):
+    def sample_logits_pairwise(self, X, mask, temperature):
         embeddings, E_idx = self.featurizer.sample(X, mask, only_embeddings=True, temperature=temperature)
         E_idx = E_idx.numpy()
 
@@ -226,6 +226,11 @@ class PairwiseCPDModel(Model):
         h_V_pairwise_numpy = make_h_V_pairwise_redneck(h_V_stacked.numpy(), E_idx)
         h_V_pairwise = tf.convert_to_tensor(h_V_pairwise_numpy)
         logits_pairwise = self.pairwise_classificator(h_V_pairwise)
+        return logits_pairwise, E_idx
+
+    def sample_pairwise_before_argmax(self, X, mask, temperature, prediction_type):
+
+        logits_pairwise, _ = self.sample_logits_pairwise(X, mask, temperature)
         if prediction_type == "frequency":
             prediction_frequencies = build_prediction_frequencies_redneck(
                 logits_pairwise.numpy(),
@@ -236,6 +241,7 @@ class PairwiseCPDModel(Model):
             )
 
             return prediction_frequencies
+
         elif prediction_type == "logits_sum":
             residuewise_logits = build_logits_residuewise(
                 logits_pairwise.numpy(),
@@ -245,6 +251,7 @@ class PairwiseCPDModel(Model):
             )
 
             return residuewise_logits
+
         else:
             raise Exception(f"Unknown prediction type: {prediction_type}")
 

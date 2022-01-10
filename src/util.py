@@ -253,3 +253,31 @@ def build_logits_residuewise(logits_pairwise, E_idx, num_single_labels, mask):
     #     logits_residuewise[:, E_idx[:, edge_start, :], :] += addition
 
     return logits_residuewise
+
+# [batch_size, n_nodes, n_nodes, n_letters, n_letters]
+# treat pairwise logits as pairwise energies
+def energy_matrix_from_logits_pairwise(logits_pairwise, E_idx, mask, num_single_labels):
+    energy_matrix = np.zeros((logits_pairwise.shape[0], mask.shape[1], mask.shape[1], num_single_labels, num_single_labels))
+
+    edge_starts = [i for i in range(logits_pairwise.shape[1])]
+    for batch_idx in range(logits_pairwise.shape[0]):
+        edge_ends = E_idx[batch_idx, :, :]
+
+        for edge_start, edge_end in zip(edge_starts, edge_ends):
+            energy_matrix[batch_idx, edge_start, edge_end] = logits_pairwise[batch_idx, edge_start, :].reshape(len(edge_end), num_single_labels, num_single_labels)
+
+    repeated_mask = extend_mask_for_last_dims(mask, energy_matrix)
+
+    energy_matrix = np.where(repeated_mask, energy_matrix, 0)
+
+    return energy_matrix.transpose(0, 1, 3, 2, 4).reshape(logits_pairwise.shape[0], mask.shape[1] * num_single_labels, mask.shape[1] * num_single_labels)
+
+def labels_to_onehot(labels, num_letters):
+    assert len(labels.shape) == 1
+    return np.eye(num_letters)[labels].reshape(-1)
+
+def onehot_to_labels(onehot, num_letters):
+    n_nodes = int(onehot.shape[-1] / num_letters)
+    block_matrix = np.diag(repeat_block_n(np.arange(num_letters), num_letters, n_nodes))
+    ones_diag_matrix = np.eye(int(onehot.shape[-1] / num_letters))[repeat_block_n(np.arange(n_nodes), 1, num_letters)]
+    return onehot @ block_matrix @ ones_diag_matrix
