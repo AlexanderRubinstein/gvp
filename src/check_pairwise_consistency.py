@@ -21,6 +21,13 @@ def make_parser():
                     help='output folder with pairwise histograms')
     parser.add_argument('--max_structs', type=int, default=0,
                     help='max number of structs to check')
+    parser.add_argument(
+        '--aggregation_type',
+        type=str,
+        required=True,
+        help='how to aggregate pairwise logits',
+        choices=["frequency", "logits_sum"]
+    )
     return parser
 
 def plot_consistency_histogram(prediction_frequencies, output_path, idx, num_letters=20):
@@ -77,7 +84,7 @@ if __name__ == "__main__":
     temperature = 0.1
     os.makedirs(args.output_path, exist_ok=True)
     for structure, seq, mask in tqdm.tqdm(testset):
-        prediction_frequencies = model.sample_pairwise_before_argmax(structure, mask, temperature, "frequency")
+        prediction_frequencies = model.sample_pairwise_before_argmax(structure, mask, temperature, args.aggregation_type)
         plot_consistency_histogram(prediction_frequencies.squeeze(0), args.output_path, idx)
         idx += 1
         if args.max_structs > 0 and idx == args.max_structs:

@@ -230,7 +230,7 @@ class PairwiseCPDModel(Model):
 
     def sample_pairwise_before_argmax(self, X, mask, temperature, prediction_type):
 
-        logits_pairwise, _ = self.sample_logits_pairwise(X, mask, temperature)
+        logits_pairwise, E_idx = self.sample_logits_pairwise(X, mask, temperature)
         if prediction_type == "frequency":
             prediction_frequencies = build_prediction_frequencies_redneck(
                 logits_pairwise.numpy(),
